@@ -1,6 +1,5 @@
 import OpenAI from 'openai';
 import mammoth from 'mammoth';
-import { PDFParse } from 'pdf-parse';
 import { downloadFromR2 } from './r2';
 
 export type Jurisdiction = 'AU' | 'UK' | 'USA';
@@ -21,6 +20,11 @@ interface ExtractedFile {
 }
 
 type ExtractionMode = 'preview' | 'full';
+
+type PDFParseCtor = new (options: { data: Buffer }) => {
+  getText: () => Promise<{ text?: string }>;
+  destroy: () => Promise<void>;
+};
 
 export interface RiskItem {
   id: string;
@@ -262,6 +266,7 @@ async function extractFileForAnalysis(
   }
 
   if (ext === 'pdf') {
+    const PDFParse = await getPDFParseCtor();
     const parser = new PDFParse({ data: buffer });
 
     try {
@@ -312,6 +317,16 @@ async function extractFileForAnalysis(
   }
 
   return { text: `[Unsupported file type: ${filename}]` };
+}
+
+let pdfParseCtorPromise: Promise<PDFParseCtor> | null = null;
+
+async function getPDFParseCtor(): Promise<PDFParseCtor> {
+  if (!pdfParseCtorPromise) {
+    pdfParseCtorPromise = import('pdf-parse').then(module => module.PDFParse as PDFParseCtor);
+  }
+
+  return pdfParseCtorPromise;
 }
 
 async function buildMessages(
