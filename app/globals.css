@@ -1,0 +1,78 @@
+@import url('https://fonts.googleapis.com/css2?family=Kanit:wght@700;900&family=Inter:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg: #FFFFFF;
+  --color-surface: #F7F7F7;
+  --color-border: #E5E5E5;
+  --color-text: #111111;
+  --color-muted: #6B6B6B;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  padding: 0;
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Upload zone drag-over pulse */
+@keyframes border-pulse {
+  0%, 100% { border-color: #111111; }
+  50%       { border-color: #525252; }
+}
+
+.drop-active {
+  animation: border-pulse 1s ease-in-out infinite;
+  background: #F7F7F7;
+}
+
+/* Risk badge */
+.badge-high   { background: #FEF2F2; color: #DC2626; }
+.badge-medium { background: #FFFBEB; color: #D97706; }
+.badge-low    { background: #F0FDF4; color: #16A34A; }
+
+/* Blur paywall */
+.blur-paywall {
+  filter: blur(5px);
+  user-select: none;
+  pointer-events: none;
+}
+
+/* Smooth transitions */
+.slide-in {
+  animation: slideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Form input focus */
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: #111111 !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #C8C8C8; border-radius: 3px; }
+
+/* Progress bar animation */
+@keyframes progress {
+  0%   { width: 0%; }
+  100% { width: 100%; }
+}
+
+.progress-bar { transition: width 0.3s ease; }
