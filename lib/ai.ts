@@ -8,7 +8,9 @@ export type AnalysisStage = 'preview' | 'full';
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MIN_EMBEDDED_PDF_TEXT = 1200;
-const MAX_TEXT_CHARS_PER_FILE = 50000;
+const PREVIEW_MAX_TEXT_CHARS_PER_FILE = 18000;
+const FULL_MAX_TEXT_CHARS_PER_FILE = 50000;
+const PREVIEW_MAX_TOTAL_TEXT_CHARS = 28000;
 
 interface ExtractedFile {
   fileData?: string;
@@ -17,6 +19,8 @@ interface ExtractedFile {
   base64?: string;
   mediaType?: string;
 }
+
+type ExtractionMode = 'preview' | 'full';
 
 export interface RiskItem {
   id: string;
@@ -208,7 +212,11 @@ function cleanJsonResponse(raw: string): string {
     .trim();
 }
 
-async function extractFileForAnalysis(r2Key: string, filename: string): Promise<ExtractedFile> {
+async function extractFileForAnalysis(
+  r2Key: string,
+  filename: string,
+  mode: ExtractionMode
+): Promise<ExtractedFile> {
   const buffer = await downloadFromR2(r2Key);
   const ext = filename.split('.').pop()?.toLowerCase() ?? '';
 
@@ -230,6 +238,14 @@ async function extractFileForAnalysis(r2Key: string, filename: string): Promise<
 
       if (text && text.length >= MIN_EMBEDDED_PDF_TEXT) {
         return { text };
+      }
+
+      if (mode === 'preview') {
+        return {
+          text: text
+            ? `[Only limited text could be extracted from ${filename}. Fast preview is using the embedded text only, so flag uncertainty where needed.]\n\n${text.slice(0, 6000)}`
+            : `[${filename} appears to be a scanned or image-only PDF. Fast preview cannot run OCR, so treat the document as unreadable and say that clearly in the summary.]`,
+        };
       }
 
       return {
@@ -270,11 +286,15 @@ async function buildMessages(
   r2Keys: string[],
   filenames: string[],
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  mode: ExtractionMode
 ): Promise<OpenAI.Chat.Completions.ChatCompletionMessageParam[]> {
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: 'system', content: systemPrompt },
   ];
+  let totalTextChars = 0;
+  const maxPerFileChars =
+    mode === 'preview' ? PREVIEW_MAX_TEXT_CHARS_PER_FILE : FULL_MAX_TEXT_CHARS_PER_FILE;
 
   for (let i = 0; i < r2Keys.length; i++) {
     const key = r2Keys[i];
@@ -286,16 +306,18 @@ async function buildMessages(
     });
 
     try {
-      const extracted = await extractFileForAnalysis(key, filename);
+      const extracted = await extractFileForAnalysis(key, filename, mode);
 
       if (extracted.fileData && extracted.filename) {
         const content: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [];
 
         if (extracted.text) {
+          const trimmedText = extracted.text.slice(0, maxPerFileChars);
           content.push({
             type: 'text',
-            text: extracted.text,
+            text: trimmedText,
           });
+          totalTextChars += trimmedText.length;
         }
 
         content.push({
@@ -320,10 +342,21 @@ async function buildMessages(
           ],
         });
       } else if (extracted.text) {
+        const trimmedText = extracted.text.slice(0, maxPerFileChars);
         messages.push({
           role: 'user',
-          content: extracted.text.slice(0, MAX_TEXT_CHARS_PER_FILE),
+          content: trimmedText,
         });
+        totalTextChars += trimmedText.length;
+      }
+
+      if (mode === 'preview' && totalTextChars >= PREVIEW_MAX_TOTAL_TEXT_CHARS) {
+        messages.push({
+          role: 'user',
+          content:
+            '[Fast preview limit reached. Work from the highest-signal material already provided and say if later pages may contain more issues.]',
+        });
+        break;
       }
     } catch (err) {
       messages.push({
@@ -346,12 +379,14 @@ async function runModel<T>(
   filenames: string[],
   systemPrompt: string,
   userPrompt: string,
-  maxTokens: number
+  maxTokens: number,
+  mode: ExtractionMode,
+  model: string
 ): Promise<T> {
-  const messages = await buildMessages(r2Keys, filenames, systemPrompt, userPrompt);
+  const messages = await buildMessages(r2Keys, filenames, systemPrompt, userPrompt, mode);
 
   const response = await client.chat.completions.create({
-    model: 'gpt-4o',
+    model,
     max_tokens: maxTokens,
     messages,
   });
@@ -371,7 +406,9 @@ export async function analysePreviewContract(
     filenames,
     buildSystemPrompt(jurisdiction),
     buildPreviewPrompt(contractType, jurisdiction),
-    2200
+    1400,
+    'preview',
+    'gpt-4o-mini'
   );
 
   return {
@@ -393,7 +430,9 @@ export async function analyseFullContract(
     filenames,
     buildSystemPrompt(jurisdiction),
     buildFullPrompt(contractType, jurisdiction),
-    5000
+    5000,
+    'full',
+    'gpt-4o'
   );
 
   if (!result.risks || !Array.isArray(result.risks)) {

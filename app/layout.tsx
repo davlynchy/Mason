@@ -6,12 +6,9 @@ export const metadata: Metadata = {
   title: 'Mason - Contract Risk Review',
   description: 'AI-powered contract analysis for construction professionals. Know every risk before you sign.',
   icons: {
-    icon: [
-      { url: '/favicon.svg', type: 'image/svg+xml' },
-      { url: '/favicon.png', type: 'image/png' },
-    ],
-    shortcut: '/favicon.svg',
-    apple: '/favicon.svg',
+    icon: [{ url: '/favicon.svg?v=2', type: 'image/svg+xml' }],
+    shortcut: '/favicon.svg?v=2',
+    apple: '/favicon.svg?v=2',
   },
   openGraph: {
     title: 'Mason - Contract Risk Review',

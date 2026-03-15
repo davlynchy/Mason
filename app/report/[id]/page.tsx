@@ -114,7 +114,9 @@ export default function ReportPage() {
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
   const [fullAnalysisStarting, setFullAnalysisStarting] = useState(false);
+  const [previewAnalysisStarting, setPreviewAnalysisStarting] = useState(false);
   const fullAnalysisRequested = useRef(false);
+  const previewAnalysisRequested = useRef(false);
 
   const fetchReport = useCallback(async () => {
     try {
@@ -147,6 +149,28 @@ export default function ReportPage() {
 
     return () => clearInterval(interval);
   }, [fetchReport]);
+
+  useEffect(() => {
+    if (!report || report.previewData || report.status === 'processing' || previewAnalysisRequested.current) {
+      return;
+    }
+
+    previewAnalysisRequested.current = true;
+    setPreviewAnalysisStarting(true);
+
+    void fetch('/api/analyse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reportId: id, stage: 'preview' }),
+    })
+      .catch(error => {
+        console.error('Failed to start preview analysis', error);
+      })
+      .finally(() => {
+        setPreviewAnalysisStarting(false);
+        void fetchReport();
+      });
+  }, [fetchReport, id, report]);
 
   useEffect(() => {
     if (!report?.paid || report.fullData || report.status === 'processing' || fullAnalysisRequested.current) {
@@ -225,14 +249,14 @@ export default function ReportPage() {
     );
   }
 
-  const isInitialProcessing = !report.previewData && (report.status === 'processing' || report.status === 'uploading');
+  const isInitialProcessing = !report.previewData && (report.status === 'processing' || report.status === 'uploading' || previewAnalysisStarting);
   const isFullProcessing = !!report.previewData && report.paid && !report.fullData && (report.status === 'processing' || fullAnalysisStarting);
 
   if (isInitialProcessing) {
     return (
       <div className="flex min-h-screen flex-col bg-white">
         <header className="border-b border-mason-gray-100 px-6 py-5">
-          <Image src="/logo.svg" alt="Mason" width={180} height={40} className="h-8 w-auto" priority />
+          <Image src="/logo.svg?v=2" alt="Mason" width={180} height={40} className="h-8 w-auto" priority />
         </header>
         <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
           <div className="h-12 w-12 animate-spin rounded-full border-2 border-mason-black border-t-transparent" />
@@ -255,7 +279,7 @@ export default function ReportPage() {
     <div className="min-h-screen bg-white">
       <header className="sticky top-0 z-50 border-b border-mason-gray-100 bg-white">
         <div className="mx-auto flex h-16 max-w-4xl items-center justify-between px-6">
-          <Image src="/logo.svg" alt="Mason" width={180} height={40} className="h-8 w-auto" priority />
+          <Image src="/logo.svg?v=2" alt="Mason" width={180} height={40} className="h-8 w-auto" priority />
           {!report.paid ? (
             <button
               type="button"
@@ -397,11 +421,11 @@ export default function ReportPage() {
                   <div className="mt-5">
                     <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">Key financial risks</p>
                     <ul className="mt-2 space-y-2">
-                      {full.financial_summary.key_financial_risks.map((item, index) => (
-                        <li key={`${item}-${index}`} className="text-sm text-mason-gray-700">
-                          • {item}
-                        </li>
-                      ))}
+                        {full.financial_summary.key_financial_risks.map((item, index) => (
+                          <li key={`${item}-${index}`} className="text-sm text-mason-gray-700">
+                            - {item}
+                          </li>
+                        ))}
                     </ul>
                   </div>
                 </div>

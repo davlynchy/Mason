@@ -1,4 +1,16 @@
-<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect x="4" y="4" width="56" height="56" rx="16" fill="white" stroke="#111111" stroke-width="4"/>
-  <path d="M17 45V19H23.2L32 34.25L40.8 19H47V45H41V29.95L34.65 40.75H29.3L23 29.95V45H17Z" fill="#111111"/>
+<svg width="100" height="100" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="66.0002" y="66" width="23.9998" height="23.9994" fill="black"/>
+<rect x="66.0002" y="66" width="23.9998" height="23.9994" stroke="black"/>
+<rect x="38.0043" y="66" width="23.9998" height="23.9994" fill="black"/>
+<rect x="38.0043" y="66" width="23.9998" height="23.9994" stroke="black"/>
+<rect x="10" y="66" width="23.9998" height="23.9994" fill="black"/>
+<rect x="10" y="66" width="23.9998" height="23.9994" stroke="black"/>
+<rect x="66.0002" y="38.0024" width="23.9998" height="23.9994" fill="black"/>
+<rect x="66.0002" y="38.0024" width="23.9998" height="23.9994" stroke="black"/>
+<rect x="37.9871" y="37.9985" width="23.9998" height="23.9994" fill="black"/>
+<rect x="37.9871" y="37.9985" width="23.9998" height="23.9994" stroke="black"/>
+<rect x="10" y="37.9985" width="23.9998" height="23.9994" fill="black"/>
+<rect x="10" y="37.9985" width="23.9998" height="23.9994" stroke="black"/>
+<rect x="10" y="10" width="79.9994" height="23.9994" fill="black"/>
+<rect x="10" y="10" width="79.9994" height="23.9994" stroke="black"/>
 </svg>

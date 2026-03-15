@@ -276,21 +276,6 @@ export default function LandingPage() {
       const jurisdictionConfig = JURISDICTIONS.find(item => item.value === signupForm.jurisdiction);
       setProcessingMsg(jurisdictionConfig?.loadingLabel ?? 'Generating your preview...');
 
-      void fetch('/api/analyse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          reportId,
-          r2Keys,
-          contractType: signupForm.contractType,
-          jurisdiction: signupForm.jurisdiction,
-          stage: 'preview',
-        }),
-        keepalive: true,
-      }).catch((err: unknown) => {
-        console.error('Failed to start preview analysis', err);
-      });
-
       router.push(`/report/${reportId}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
@@ -327,7 +312,7 @@ export default function LandingPage() {
     <div className="min-h-screen bg-white">
       <header className="fixed inset-x-0 top-0 z-50 border-b border-mason-gray-100 bg-white">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-          <Image src="/logo.svg" alt="Mason" width={180} height={40} className="h-8 w-auto" priority />
+          <Image src="/logo.svg?v=2" alt="Mason" width={180} height={40} className="h-8 w-auto" priority />
           <div className="flex items-center gap-6">
             <span className="hidden text-sm text-mason-gray-500 sm:block">
               Free first risk · Full report from $799
