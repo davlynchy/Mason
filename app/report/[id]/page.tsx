@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Image from 'next/image';
 import { useParams, useSearchParams } from 'next/navigation';
 
 type ContractType = 'subcontract' | 'head_contract';
@@ -41,10 +40,15 @@ interface ReportData {
   jurisdiction: Jurisdiction;
   analysisStage: AnalysisStage;
   previewData: {
-    executive_summary: string;
-    contract_details: ContractDetails;
-    risk_count: { high: number; medium: number; low: number };
-    preview_risk: Risk | null;
+    executive_summary?: string;
+    contract_details?: ContractDetails;
+    risk_count?: { high: number; medium: number; low: number };
+    preview_risk?: Risk | null;
+    progress?: {
+      phase: 'summary' | 'risk' | 'complete';
+      message: string;
+      completedSteps: string[];
+    };
   } | null;
   fullData: {
     risks: Risk[];
@@ -76,6 +80,10 @@ function processingCopy(jurisdiction: Jurisdiction, paid: boolean) {
     return `Generating your full report against ${jurisdictionLabel(jurisdiction)}.`;
   }
   return `Generating your fast preview against ${jurisdictionLabel(jurisdiction)}.`;
+}
+
+function BrandLogo() {
+  return <img src="/logo.svg?v=3" alt="Mason" className="h-8 w-auto" />;
 }
 
 function RiskBadge({ level }: { level: Risk['level'] }) {
@@ -249,14 +257,20 @@ export default function ReportPage() {
     );
   }
 
-  const isInitialProcessing = !report.previewData && (report.status === 'processing' || report.status === 'uploading' || previewAnalysisStarting);
+  const hasPreviewContent = !!(
+    report.previewData?.executive_summary ||
+    report.previewData?.contract_details ||
+    report.previewData?.risk_count ||
+    report.previewData?.preview_risk
+  );
+  const isInitialProcessing = !hasPreviewContent && (report.status === 'processing' || report.status === 'uploading' || previewAnalysisStarting);
   const isFullProcessing = !!report.previewData && report.paid && !report.fullData && (report.status === 'processing' || fullAnalysisStarting);
 
   if (isInitialProcessing) {
     return (
       <div className="flex min-h-screen flex-col bg-white">
         <header className="border-b border-mason-gray-100 px-6 py-5">
-          <Image src="/logo.svg?v=2" alt="Mason" width={180} height={40} className="h-8 w-auto" priority />
+          <BrandLogo />
         </header>
         <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
           <div className="h-12 w-12 animate-spin rounded-full border-2 border-mason-black border-t-transparent" />
@@ -273,13 +287,16 @@ export default function ReportPage() {
 
   const preview = report.previewData;
   const full = report.fullData;
-  const totalRisks = (preview?.risk_count.high ?? 0) + (preview?.risk_count.medium ?? 0) + (preview?.risk_count.low ?? 0);
+  const totalRisks =
+    (preview?.risk_count?.high ?? 0) +
+    (preview?.risk_count?.medium ?? 0) +
+    (preview?.risk_count?.low ?? 0);
 
   return (
     <div className="min-h-screen bg-white">
       <header className="sticky top-0 z-50 border-b border-mason-gray-100 bg-white">
         <div className="mx-auto flex h-16 max-w-4xl items-center justify-between px-6">
-          <Image src="/logo.svg?v=2" alt="Mason" width={180} height={40} className="h-8 w-auto" priority />
+          <BrandLogo />
           {!report.paid ? (
             <button
               type="button"
@@ -306,25 +323,56 @@ export default function ReportPage() {
 
         {preview ? (
           <>
+            {report.status === 'processing' ? (
+              <div className="mb-6 rounded-2xl border border-mason-gray-100 bg-mason-gray-50 px-4 py-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-mason-gray-400">
+                  Live Preview
+                </p>
+                <p className="mt-2 text-sm text-mason-black">
+                  {preview.progress?.message || processingCopy(report.jurisdiction, false)}
+                </p>
+                <div className="mt-4 grid gap-2 sm:grid-cols-4">
+                  {['Files uploaded', 'Summary generated', 'Risk counts mapped', 'Top risk explained'].map(step => {
+                    const complete = preview.progress?.completedSteps?.includes(step) ?? false;
+                    return (
+                      <div
+                        key={step}
+                        className={`rounded-xl px-3 py-3 text-xs font-medium ${
+                          complete ? 'bg-white text-mason-black' : 'bg-white/60 text-mason-gray-400'
+                        }`}
+                      >
+                        {complete ? 'Done: ' : 'Waiting: '}
+                        {step}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
             <div className="mb-8">
               <p className="text-xs font-semibold uppercase tracking-[0.32em] text-mason-gray-400">
                 Contract Risk Review
               </p>
               <h1 className="mt-4 font-kanit text-4xl font-black text-mason-black">
-                {preview.contract_details.contract_type || 'Contract preview'}
+                {preview.contract_details?.contract_type || 'Contract preview'}
               </h1>
-              <p className="mt-4 max-w-3xl text-base leading-relaxed text-mason-gray-600">
-                {preview.executive_summary}
-              </p>
+              {preview.executive_summary ? (
+                <p className="mt-4 max-w-3xl text-base leading-relaxed text-mason-gray-600">
+                  {preview.executive_summary}
+                </p>
+              ) : (
+                <div className="mt-4 h-16 max-w-3xl animate-pulse rounded-2xl bg-mason-gray-50" />
+              )}
             </div>
 
             <div className="mb-8 grid gap-4 md:grid-cols-2">
               {[
-                { label: 'Parties', value: preview.contract_details.parties },
-                { label: 'Contract value', value: preview.contract_details.contract_value ?? 'Not specified' },
+                { label: 'Parties', value: preview.contract_details?.parties ?? 'Reading document...' },
+                { label: 'Contract value', value: preview.contract_details?.contract_value ?? 'Reading document...' },
                 { label: 'Contract type', value: report.contractType === 'subcontract' ? 'Subcontract' : 'Head contract' },
                 { label: 'Jurisdiction', value: jurisdictionLabel(report.jurisdiction) },
-                { label: 'Key dates', value: preview.contract_details.key_dates },
+                { label: 'Key dates', value: preview.contract_details?.key_dates ?? 'Reading document...' },
               ].map(item => (
                 <div key={item.label} className="rounded-2xl bg-mason-gray-50 px-4 py-4">
                   <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">{item.label}</p>
@@ -339,9 +387,9 @@ export default function ReportPage() {
               </p>
               <div className="mt-4 grid grid-cols-3 gap-4">
                 {[
-                  { label: 'HIGH', count: preview.risk_count.high, tone: 'text-red-600' },
-                  { label: 'MEDIUM', count: preview.risk_count.medium, tone: 'text-amber-600' },
-                  { label: 'LOW', count: preview.risk_count.low, tone: 'text-green-600' },
+                  { label: 'HIGH', count: preview.risk_count?.high ?? 0, tone: 'text-red-600' },
+                  { label: 'MEDIUM', count: preview.risk_count?.medium ?? 0, tone: 'text-amber-600' },
+                  { label: 'LOW', count: preview.risk_count?.low ?? 0, tone: 'text-green-600' },
                 ].map(item => (
                   <div key={item.label} className="rounded-xl bg-mason-gray-50 px-4 py-4 text-center">
                     <p className={`font-kanit text-3xl font-black ${item.tone}`}>{item.count}</p>
@@ -351,7 +399,7 @@ export default function ReportPage() {
               </div>
             </div>
 
-            {preview.preview_risk ? (
+                  {preview.preview_risk ? (
               <div className="mb-10">
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="font-kanit text-2xl font-black text-mason-black">Fast Preview</h2>
@@ -362,6 +410,13 @@ export default function ReportPage() {
                   ) : null}
                 </div>
                 <RiskCard risk={preview.preview_risk} />
+              </div>
+            ) : report.status === 'processing' ? (
+              <div className="mb-10 rounded-3xl border border-mason-gray-100 bg-mason-gray-50 p-8">
+                <div className="mb-4 h-3 w-40 animate-pulse rounded-full bg-mason-gray-200" />
+                <div className="mb-3 h-6 w-2/3 animate-pulse rounded-full bg-mason-gray-200" />
+                <div className="mb-3 h-4 w-full animate-pulse rounded-full bg-mason-gray-200" />
+                <div className="h-4 w-5/6 animate-pulse rounded-full bg-mason-gray-200" />
               </div>
             ) : null}
 

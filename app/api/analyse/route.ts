@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import {
   analyseFullContract,
-  analysePreviewContract,
+  analysePreviewRisk,
+  analysePreviewSnapshot,
   type AnalysisStage,
   type Jurisdiction,
 } from '@/lib/ai';
@@ -129,7 +130,36 @@ async function runAnalysis(
     });
 
     if (stage === 'preview') {
-      const previewData = await analysePreviewContract(r2Keys, filenames, contractType, jurisdiction);
+      await updatePreviewState(supabase, reportId, {
+        progress: {
+          phase: 'summary',
+          message: 'Reading your contract and extracting the core commercial terms.',
+          completedSteps: ['Files uploaded'],
+        },
+      });
+
+      const snapshot = await analysePreviewSnapshot(r2Keys, filenames, contractType, jurisdiction);
+
+      await updatePreviewState(supabase, reportId, {
+        ...snapshot,
+        preview_risk: null,
+        progress: {
+          phase: 'risk',
+          message: 'First risk identified. Mason is now writing the most important warning.',
+          completedSteps: ['Files uploaded', 'Summary generated', 'Risk counts mapped'],
+        },
+      });
+
+      const previewRisk = await analysePreviewRisk(r2Keys, filenames, contractType, jurisdiction);
+      const previewData = {
+        ...snapshot,
+        preview_risk: previewRisk,
+        progress: {
+          phase: 'complete',
+          message: 'Fast preview ready.',
+          completedSteps: ['Files uploaded', 'Summary generated', 'Risk counts mapped', 'Top risk explained'],
+        },
+      };
 
       const { error } = await supabase
         .from('reports')
@@ -180,5 +210,25 @@ async function runAnalysis(
       .eq('id', reportId);
 
     return { status: 'error', error: msg };
+  }
+}
+
+async function updatePreviewState(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  reportId: string,
+  previewData: Record<string, unknown>
+) {
+  const { error } = await supabase
+    .from('reports')
+    .update({
+      status: 'processing',
+      analysis_stage: 'preview',
+      preview_data: previewData,
+    })
+    .eq('id', reportId);
+
+  if (error) {
+    throw new Error('Failed to save preview progress');
   }
 }

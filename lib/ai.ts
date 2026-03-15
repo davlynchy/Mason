@@ -44,6 +44,17 @@ export interface PreviewAnalysisResult {
   preview_risk: RiskItem | null;
 }
 
+export interface PreviewSnapshotResult {
+  executive_summary: string;
+  contract_details: {
+    parties: string;
+    contract_value: string | null;
+    contract_type: string;
+    key_dates: string;
+  };
+  risk_count: { high: number; medium: number; low: number };
+}
+
 export interface FullAnalysisResult {
   risks: RiskItem[];
   financial_summary: {
@@ -111,7 +122,7 @@ CRITICAL RULES:
 6. Return ONLY valid JSON - no preamble, no markdown, no code fences.`;
 }
 
-function buildPreviewPrompt(
+function buildPreviewSnapshotPrompt(
   contractType: 'subcontract' | 'head_contract',
   jurisdiction: Jurisdiction
 ): string {
@@ -121,7 +132,7 @@ function buildPreviewPrompt(
 
   return `You are acting for the ${perspective}.
 
-Review the provided contract under ${getJurisdictionLabel(jurisdiction)} and return a FAST PREVIEW in this exact JSON shape:
+Review the provided contract under ${getJurisdictionLabel(jurisdiction)} and return a FAST PREVIEW SNAPSHOT in this exact JSON shape:
 
 {
   "executive_summary": "2-4 direct sentences",
@@ -135,7 +146,29 @@ Review the provided contract under ${getJurisdictionLabel(jurisdiction)} and ret
     "high": <integer>,
     "medium": <integer>,
     "low": <integer>
-  },
+  }
+}
+
+Requirements:
+- Prioritise speed.
+- Estimate total risk counts across the contract.
+- Do not include any risk object yet.
+- If the contract is unreadable, say so in executive_summary.`;
+}
+
+function buildPreviewRiskPrompt(
+  contractType: 'subcontract' | 'head_contract',
+  jurisdiction: Jurisdiction
+): string {
+  const perspective = contractType === 'subcontract'
+    ? 'subcontractor'
+    : 'head contractor / main contractor';
+
+  return `You are acting for the ${perspective}.
+
+Review the provided contract under ${getJurisdictionLabel(jurisdiction)} and return ONLY the single most important early warning risk in this exact JSON shape:
+
+{
   "preview_risk": {
     "id": "R01",
     "level": "HIGH",
@@ -148,10 +181,9 @@ Review the provided contract under ${getJurisdictionLabel(jurisdiction)} and ret
 }
 
 Requirements:
-- Prioritise speed and the single most important risk.
-- Estimate total risk counts across the contract even if you only fully explain one risk.
-- If no HIGH risk exists, use the most important MEDIUM risk as preview_risk.
-- If the contract is unreadable, say so in executive_summary and set preview_risk to null.`;
+- Prioritise the most commercially dangerous issue for the party you act for.
+- If no HIGH risk exists, return the strongest MEDIUM risk.
+- If the contract is unreadable, return { "preview_risk": null }.`;
 }
 
 function buildFullPrompt(
@@ -401,22 +433,49 @@ export async function analysePreviewContract(
   contractType: 'subcontract' | 'head_contract',
   jurisdiction: Jurisdiction
 ): Promise<PreviewAnalysisResult> {
-  const result = await runModel<PreviewAnalysisResult>(
+  const snapshot = await analysePreviewSnapshot(r2Keys, filenames, contractType, jurisdiction);
+  const previewRisk = await analysePreviewRisk(r2Keys, filenames, contractType, jurisdiction);
+
+  return {
+    ...snapshot,
+    preview_risk: previewRisk,
+  };
+}
+
+export async function analysePreviewSnapshot(
+  r2Keys: string[],
+  filenames: string[],
+  contractType: 'subcontract' | 'head_contract',
+  jurisdiction: Jurisdiction
+): Promise<PreviewSnapshotResult> {
+  return runModel<PreviewSnapshotResult>(
     r2Keys,
     filenames,
     buildSystemPrompt(jurisdiction),
-    buildPreviewPrompt(contractType, jurisdiction),
-    1400,
+    buildPreviewSnapshotPrompt(contractType, jurisdiction),
+    1100,
+    'preview',
+    'gpt-4o-mini'
+  );
+}
+
+export async function analysePreviewRisk(
+  r2Keys: string[],
+  filenames: string[],
+  contractType: 'subcontract' | 'head_contract',
+  jurisdiction: Jurisdiction
+): Promise<RiskItem | null> {
+  const result = await runModel<{ preview_risk: RiskItem | null }>(
+    r2Keys,
+    filenames,
+    buildSystemPrompt(jurisdiction),
+    buildPreviewRiskPrompt(contractType, jurisdiction),
+    900,
     'preview',
     'gpt-4o-mini'
   );
 
-  return {
-    executive_summary: result.executive_summary,
-    contract_details: result.contract_details,
-    risk_count: result.risk_count,
-    preview_risk: result.preview_risk,
-  };
+  return result.preview_risk ?? null;
 }
 
 export async function analyseFullContract(

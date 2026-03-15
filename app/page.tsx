@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 
 type PageMode = 'signup' | 'login';
@@ -312,7 +311,7 @@ export default function LandingPage() {
     <div className="min-h-screen bg-white">
       <header className="fixed inset-x-0 top-0 z-50 border-b border-mason-gray-100 bg-white">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-          <Image src="/logo.svg?v=2" alt="Mason" width={180} height={40} className="h-8 w-auto" priority />
+          <img src="/logo.svg?v=3" alt="Mason" className="h-8 w-auto" />
           <div className="flex items-center gap-6">
             <span className="hidden text-sm text-mason-gray-500 sm:block">
               Free first risk · Full report from $799
