@@ -263,13 +263,27 @@ export default function LandingPage() {
       const { reportId } = createData;
 
       setProcessingMsg(`Uploading ${files.length} file${files.length > 1 ? 's' : ''}...`);
-      const r2Keys: string[] = [];
+      const uploadedFiles: Array<{ r2Key: string; filename: string }> = [];
       for (const item of files) {
         setFiles(prev => prev.map(file =>
           file.id === item.id ? { ...file, status: 'uploading' } : file
         ));
         const key = await uploadFile(item, reportId);
-        r2Keys.push(key);
+        uploadedFiles.push({ r2Key: key, filename: item.file.name });
+      }
+
+      const persistFilesRes = await fetch('/api/report-files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reportId,
+          files: uploadedFiles,
+        }),
+      });
+
+      const persistFilesData = await persistFilesRes.json().catch(() => null);
+      if (!persistFilesRes.ok) {
+        throw new Error(persistFilesData?.error || 'Failed to save uploaded files');
       }
 
       const jurisdictionConfig = JURISDICTIONS.find(item => item.value === signupForm.jurisdiction);
