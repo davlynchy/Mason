@@ -1,10 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 
-// ── Types ──────────────────────────────────────────────────────────────────
+type ContractType = 'subcontract' | 'head_contract';
+type Jurisdiction = 'AU' | 'UK' | 'USA';
+type AnalysisStage = 'preview' | 'full';
+
 interface Risk {
   id: string;
   level: 'HIGH' | 'MEDIUM' | 'LOW';
@@ -34,7 +37,9 @@ interface ReportData {
   id: string;
   status: 'uploading' | 'processing' | 'complete' | 'error';
   paid: boolean;
-  contractType: 'subcontract' | 'head_contract';
+  contractType: ContractType;
+  jurisdiction: Jurisdiction;
+  analysisStage: AnalysisStage;
   previewData: {
     executive_summary: string;
     contract_details: ContractDetails;
@@ -49,100 +54,123 @@ interface ReportData {
   errorMessage?: string;
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
 const LEVEL_STYLES = {
-  HIGH:   { badge: 'badge-high',   dot: 'bg-risk-high',   label: 'HIGH' },
-  MEDIUM: { badge: 'badge-medium', dot: 'bg-risk-medium', label: 'MEDIUM' },
-  LOW:    { badge: 'badge-low',    dot: 'bg-risk-low',    label: 'LOW' },
+  HIGH: 'border-red-200 bg-red-50 text-red-700',
+  MEDIUM: 'border-amber-200 bg-amber-50 text-amber-700',
+  LOW: 'border-green-200 bg-green-50 text-green-700',
 };
 
+function jurisdictionLabel(jurisdiction: Jurisdiction) {
+  switch (jurisdiction) {
+    case 'AU':
+      return 'Australian construction law';
+    case 'UK':
+      return 'UK construction law';
+    case 'USA':
+      return 'US construction law';
+  }
+}
+
+function processingCopy(jurisdiction: Jurisdiction, paid: boolean) {
+  if (paid) {
+    return `Generating your full report against ${jurisdictionLabel(jurisdiction)}.`;
+  }
+  return `Generating your fast preview against ${jurisdictionLabel(jurisdiction)}.`;
+}
+
 function RiskBadge({ level }: { level: Risk['level'] }) {
-  const s = LEVEL_STYLES[level];
   return (
-    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full font-inter ${s.badge}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
-      {s.label}
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${LEVEL_STYLES[level]}`}>
+      {level}
     </span>
   );
 }
 
-function RiskCard({ risk, blurred = false }: { risk: Risk; blurred?: boolean }) {
-  const [open, setOpen] = useState(!blurred);
+function RiskCard({ risk }: { risk: Risk }) {
   return (
-    <div className={`border border-mason-gray-100 rounded-2xl overflow-hidden ${blurred ? 'blur-paywall select-none' : ''}`}>
-      <button
-        onClick={() => !blurred && setOpen(o => !o)}
-        className="w-full flex items-start gap-4 px-5 py-4 text-left hover:bg-mason-gray-50 transition-colors"
-      >
-        <span className="text-sm font-semibold text-mason-gray-300 font-inter w-8 pt-0.5">{risk.id}</span>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap mb-1">
-            <RiskBadge level={risk.level} />
-            {risk.clause && (
-              <span className="text-xs text-mason-gray-400 font-inter">{risk.clause}</span>
-            )}
-          </div>
-          <p className="text-sm font-semibold text-mason-black font-inter">{risk.title}</p>
-          <p className="text-xs text-mason-gray-500 font-inter mt-0.5 line-clamp-2">{risk.impact}</p>
+    <div className="rounded-2xl border border-mason-gray-100 bg-white p-5">
+      <div className="mb-3 flex items-center gap-3">
+        <span className="text-xs font-semibold text-mason-gray-400">{risk.id}</span>
+        <RiskBadge level={risk.level} />
+        {risk.clause ? <span className="text-xs text-mason-gray-400">{risk.clause}</span> : null}
+      </div>
+      <h3 className="text-base font-semibold text-mason-black">{risk.title}</h3>
+      <p className="mt-2 text-sm text-mason-gray-700">{risk.impact}</p>
+      <div className="mt-4 space-y-3">
+        <p className="text-sm leading-relaxed text-mason-gray-600">{risk.detail}</p>
+        <div className="rounded-xl bg-mason-gray-50 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">Recommended action</p>
+          <p className="mt-1 text-sm text-mason-black">{risk.recommendation}</p>
         </div>
-        {!blurred && (
-          <span className="text-mason-gray-300 text-sm mt-0.5">{open ? '↑' : '↓'}</span>
-        )}
-      </button>
-
-      {open && !blurred && (
-        <div className="px-5 pb-5 border-t border-mason-gray-50">
-          <div className="pt-4 space-y-4">
-            <div>
-              <p className="text-xs font-semibold text-mason-gray-400 uppercase tracking-wide font-inter mb-1.5">Detail</p>
-              <p className="text-sm text-mason-gray-700 font-inter leading-relaxed">{risk.detail}</p>
-            </div>
-            <div className="bg-mason-gray-50 rounded-xl px-4 py-3">
-              <p className="text-xs font-semibold text-mason-gray-400 uppercase tracking-wide font-inter mb-1.5">Recommended action</p>
-              <p className="text-sm text-mason-black font-inter leading-relaxed">{risk.recommendation}</p>
-            </div>
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
 
-// ── Report Page ────────────────────────────────────────────────────────────
 export default function ReportPage() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const [report, setReport] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
+  const [fullAnalysisStarting, setFullAnalysisStarting] = useState(false);
+  const fullAnalysisRequested = useRef(false);
 
-  // Poll for report status
   const fetchReport = useCallback(async () => {
     try {
       const res = await fetch(`/api/reports/${id}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        setLoading(false);
+        return null;
+      }
       const data: ReportData = await res.json();
       setReport(data);
       setLoading(false);
       return data;
     } catch {
       setLoading(false);
+      return null;
     }
   }, [id]);
 
   useEffect(() => {
     fetchReport();
-    // Poll every 3 seconds while processing
+  }, [fetchReport]);
+
+  useEffect(() => {
     const interval = setInterval(async () => {
       const data = await fetchReport();
-      if (data && (data.status === 'complete' || data.status === 'error')) {
+      if (data && data.status !== 'processing' && data.status !== 'uploading') {
         clearInterval(interval);
       }
     }, 3000);
+
     return () => clearInterval(interval);
   }, [fetchReport]);
 
-  // Stripe checkout
-  const handleUpgrade = async () => {
+  useEffect(() => {
+    if (!report?.paid || report.fullData || report.status === 'processing' || fullAnalysisRequested.current) {
+      return;
+    }
+
+    fullAnalysisRequested.current = true;
+    setFullAnalysisStarting(true);
+
+    void fetch('/api/analyse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reportId: id, stage: 'full' }),
+    })
+      .catch(error => {
+        console.error('Failed to start full analysis', error);
+      })
+      .finally(() => {
+        setFullAnalysisStarting(false);
+        void fetchReport();
+      });
+  }, [fetchReport, id, report]);
+
+  async function handleUpgrade() {
     setPaying(true);
     try {
       const res = await fetch('/api/checkout', {
@@ -150,303 +178,249 @@ export default function ReportPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reportId: id }),
       });
-      const { url } = await res.json();
-      if (url) window.location.href = url;
-    } catch {
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } finally {
       setPaying(false);
     }
-  };
+  }
 
-  // ── States ─────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="min-h-screen bg-white flex flex-col items-center justify-center gap-4">
-        <div className="w-8 h-8 border-2 border-mason-black border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm text-mason-gray-500 font-inter">Loading your report...</p>
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-white">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-mason-black border-t-transparent" />
+        <p className="text-sm text-mason-gray-500">Loading your report...</p>
       </div>
     );
   }
 
   if (!report) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-white">
         <div className="text-center">
-          <p className="text-lg font-semibold text-mason-black font-inter mb-2">Report not found</p>
-          <a href="/" className="text-sm text-mason-gray-500 font-inter underline">Start a new review</a>
+          <p className="text-lg font-semibold text-mason-black">Report not found</p>
+          <a href="/" className="mt-2 inline-block text-sm text-mason-gray-500 underline">
+            Start a new review
+          </a>
         </div>
       </div>
     );
   }
 
-  const isProcessing = report.status === 'uploading' || report.status === 'processing';
-  const isError      = report.status === 'error';
-  const preview      = report.previewData;
-  const full         = report.fullData;
-
-  // ── Processing ─────────────────────────────────────────────────────────
-  if (isProcessing) {
+  if (report.status === 'error') {
     return (
-      <div className="min-h-screen bg-white flex flex-col">
-        <header className="border-b border-mason-gray-100 px-6 h-16 flex items-center">
-          <Image src="/logo.png" alt="Mason" width={100} height={28} className="h-6 w-auto" />
+      <div className="flex min-h-screen items-center justify-center bg-white px-6">
+        <div className="max-w-md rounded-3xl border border-red-200 bg-red-50 p-8 text-center">
+          <p className="text-lg font-semibold text-mason-black">Analysis failed</p>
+          <p className="mt-3 text-sm leading-relaxed text-mason-gray-600">
+            {report.errorMessage || 'Something went wrong while analysing your documents.'}
+          </p>
+          <a href="/" className="mt-5 inline-flex rounded-xl bg-mason-black px-5 py-3 text-sm font-semibold text-white">
+            Start again
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  const isInitialProcessing = !report.previewData && (report.status === 'processing' || report.status === 'uploading');
+  const isFullProcessing = !!report.previewData && report.paid && !report.fullData && (report.status === 'processing' || fullAnalysisStarting);
+
+  if (isInitialProcessing) {
+    return (
+      <div className="flex min-h-screen flex-col bg-white">
+        <header className="border-b border-mason-gray-100 px-6 py-5">
+          <Image src="/logo.svg" alt="Mason" width={180} height={40} className="h-8 w-auto" priority />
         </header>
-        <div className="flex-1 flex flex-col items-center justify-center gap-6 px-6">
-          <div className="w-12 h-12 border-2 border-mason-black border-t-transparent rounded-full animate-spin" />
-          <div className="text-center max-w-sm">
-            <p className="font-semibold text-mason-black font-inter text-lg mb-2">Analysing your contract</p>
-            <p className="text-sm text-mason-gray-500 font-inter leading-relaxed">
-              Mason is reading every clause against Australian construction law.
-              This takes about 60 seconds.
+        <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
+          <div className="h-12 w-12 animate-spin rounded-full border-2 border-mason-black border-t-transparent" />
+          <div className="max-w-md">
+            <p className="text-xl font-semibold text-mason-black">Preparing your preview</p>
+            <p className="mt-3 text-sm leading-relaxed text-mason-gray-500">
+              {processingCopy(report.jurisdiction, false)}
             </p>
           </div>
-          <div className="flex flex-col gap-2 text-sm text-mason-gray-400 font-inter text-center">
-            <p>📄 Extracting document text...</p>
-            <p>⚖️ Checking AS4000 · AS2124 · SOPA...</p>
-            <p>🔍 Identifying risk items...</p>
-          </div>
         </div>
       </div>
     );
   }
 
-  // ── Error ───────────────────────────────────────────────────────────────
-  if (isError) {
-    return (
-      <div className="min-h-screen bg-white flex flex-col items-center justify-center gap-4 px-6">
-        <p className="text-lg font-semibold text-mason-black font-inter">Analysis failed</p>
-        <p className="text-sm text-mason-gray-500 font-inter max-w-sm text-center">
-          {report.errorMessage || 'Something went wrong processing your documents. Please try again.'}
-        </p>
-        <a href="/" className="bg-mason-black text-white px-6 py-3 rounded-xl text-sm font-semibold font-inter hover:bg-mason-gray-800 transition-colors">
-          Try again
-        </a>
-      </div>
-    );
-  }
-
-  // ── Complete Report ─────────────────────────────────────────────────────
-  const allRisks = full?.risks ?? [];
-  const lockedRisks = allRisks.slice(1); // First risk already shown in preview
-  const highCount   = preview?.risk_count.high   ?? 0;
-  const medCount    = preview?.risk_count.medium  ?? 0;
-  const lowCount    = preview?.risk_count.low     ?? 0;
-  const totalRisks  = highCount + medCount + lowCount;
+  const preview = report.previewData;
+  const full = report.fullData;
+  const totalRisks = (preview?.risk_count.high ?? 0) + (preview?.risk_count.medium ?? 0) + (preview?.risk_count.low ?? 0);
 
   return (
     <div className="min-h-screen bg-white">
-
-      {/* ── Header ───────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-50 bg-white border-b border-mason-gray-100">
-        <div className="max-w-3xl mx-auto px-6 h-16 flex items-center justify-between">
-          <Image src="/logo.png" alt="Mason" width={100} height={28} className="h-6 w-auto" />
-          {!report.paid && (
+      <header className="sticky top-0 z-50 border-b border-mason-gray-100 bg-white">
+        <div className="mx-auto flex h-16 max-w-4xl items-center justify-between px-6">
+          <Image src="/logo.svg" alt="Mason" width={180} height={40} className="h-8 w-auto" priority />
+          {!report.paid ? (
             <button
+              type="button"
               onClick={handleUpgrade}
               disabled={paying}
-              className="bg-mason-black text-white text-sm font-semibold font-inter px-4 py-2 rounded-xl hover:bg-mason-gray-800 transition-colors flex items-center gap-2 disabled:opacity-60"
+              className="rounded-xl bg-mason-black px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {paying ? (
-                <span className="w-4 h-4 border border-white border-t-transparent rounded-full animate-spin" />
-              ) : null}
-              Unlock Full Report — $799
+              {paying ? 'Redirecting...' : 'Unlock Full Report - $799'}
             </button>
-          )}
-          {report.paid && (
-            <span className="text-sm text-green-600 font-semibold font-inter flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-green-500" />
-              Full report unlocked
+          ) : (
+            <span className="text-sm font-semibold text-green-600">
+              {full ? 'Full report unlocked' : 'Generating full report...'}
             </span>
           )}
         </div>
       </header>
 
-      <div className="max-w-3xl mx-auto px-6 py-10">
+      <div className="mx-auto max-w-4xl px-6 py-10">
+        {searchParams.get('payment') === 'success' ? (
+          <div className="mb-6 rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            Payment received. Mason is now generating your full report.
+          </div>
+        ) : null}
 
-        {/* ── Executive Summary ───────────────────────────────────────────── */}
-        {preview && (
-          <div className="mb-8 slide-in">
-            <div className="flex items-center gap-2 mb-3">
-              <span className="text-xs font-semibold tracking-widest text-mason-gray-400 uppercase font-inter">
+        {preview ? (
+          <>
+            <div className="mb-8">
+              <p className="text-xs font-semibold uppercase tracking-[0.32em] text-mason-gray-400">
                 Contract Risk Review
-              </span>
+              </p>
+              <h1 className="mt-4 font-kanit text-4xl font-black text-mason-black">
+                {preview.contract_details.contract_type || 'Contract preview'}
+              </h1>
+              <p className="mt-4 max-w-3xl text-base leading-relaxed text-mason-gray-600">
+                {preview.executive_summary}
+              </p>
             </div>
-            <h1 className="font-kanit font-black text-3xl md:text-4xl text-mason-black mb-4 leading-tight" style={{ fontFamily: 'Kanit, sans-serif' }}>
-              {preview.contract_details.contract_type}
-            </h1>
-            <p className="text-mason-gray-600 font-inter leading-relaxed mb-6">
-              {preview.executive_summary}
-            </p>
 
-            {/* Contract details */}
-            <div className="grid sm:grid-cols-2 gap-4 mb-6">
+            <div className="mb-8 grid gap-4 md:grid-cols-2">
               {[
                 { label: 'Parties', value: preview.contract_details.parties },
                 { label: 'Contract value', value: preview.contract_details.contract_value ?? 'Not specified' },
                 { label: 'Contract type', value: report.contractType === 'subcontract' ? 'Subcontract' : 'Head contract' },
+                { label: 'Jurisdiction', value: jurisdictionLabel(report.jurisdiction) },
                 { label: 'Key dates', value: preview.contract_details.key_dates },
               ].map(item => (
-                <div key={item.label} className="bg-mason-gray-50 rounded-xl px-4 py-3">
-                  <p className="text-xs font-semibold text-mason-gray-400 uppercase tracking-wide font-inter mb-1">{item.label}</p>
-                  <p className="text-sm text-mason-black font-inter">{item.value}</p>
+                <div key={item.label} className="rounded-2xl bg-mason-gray-50 px-4 py-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">{item.label}</p>
+                  <p className="mt-1 text-sm text-mason-black">{item.value}</p>
                 </div>
               ))}
             </div>
 
-            {/* Risk count summary */}
-            <div className="border border-mason-gray-100 rounded-2xl p-5">
-              <p className="text-xs font-semibold text-mason-gray-400 uppercase tracking-wide font-inter mb-3">
-                Risk summary — {totalRisks} items identified
+            <div className="mb-8 rounded-2xl border border-mason-gray-100 p-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">
+                Preview summary - {totalRisks} risks identified
               </p>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="mt-4 grid grid-cols-3 gap-4">
                 {[
-                  { level: 'HIGH',   count: highCount,  color: 'text-risk-high',   bg: 'bg-red-50' },
-                  { level: 'MEDIUM', count: medCount,   color: 'text-risk-medium', bg: 'bg-amber-50' },
-                  { level: 'LOW',    count: lowCount,   color: 'text-risk-low',    bg: 'bg-green-50' },
-                ].map(r => (
-                  <div key={r.level} className={`${r.bg} rounded-xl px-4 py-3 text-center`}>
-                    <p className={`text-2xl font-kanit font-black ${r.color}`} style={{ fontFamily: 'Kanit, sans-serif' }}>{r.count}</p>
-                    <p className={`text-xs font-semibold ${r.color} font-inter`}>{r.level}</p>
+                  { label: 'HIGH', count: preview.risk_count.high, tone: 'text-red-600' },
+                  { label: 'MEDIUM', count: preview.risk_count.medium, tone: 'text-amber-600' },
+                  { label: 'LOW', count: preview.risk_count.low, tone: 'text-green-600' },
+                ].map(item => (
+                  <div key={item.label} className="rounded-xl bg-mason-gray-50 px-4 py-4 text-center">
+                    <p className={`font-kanit text-3xl font-black ${item.tone}`}>{item.count}</p>
+                    <p className={`text-xs font-semibold ${item.tone}`}>{item.label}</p>
                   </div>
                 ))}
               </div>
             </div>
-          </div>
-        )}
 
-        {/* ── Risk Register ────────────────────────────────────────────────── */}
-        <div className="mb-8">
-          <h2 className="font-kanit font-black text-xl text-mason-black mb-4" style={{ fontFamily: 'Kanit, sans-serif' }}>
-            Risk Register
-          </h2>
-
-          <div className="space-y-3">
-
-            {/* First risk — always visible free */}
-            {preview?.preview_risk && (
-              <RiskCard risk={preview.preview_risk} blurred={false} />
-            )}
-
-            {/* Paid: show all remaining risks */}
-            {report.paid && lockedRisks.map(risk => (
-              <RiskCard key={risk.id} risk={risk} blurred={false} />
-            ))}
-
-            {/* Not paid: blurred placeholder risks + paywall */}
-            {!report.paid && totalRisks > 1 && (
-              <div className="relative">
-                {/* Blurred placeholder cards */}
-                <div className="space-y-3 pointer-events-none">
-                  {Array.from({ length: Math.min(totalRisks - 1, 4) }).map((_, i) => (
-                    <div key={i} className="blur-paywall">
-                      <RiskCard
-                        blurred={true}
-                        risk={{
-                          id: `R0${i + 2}`,
-                          level: i % 3 === 0 ? 'HIGH' : i % 3 === 1 ? 'MEDIUM' : 'LOW',
-                          title: 'Risk item hidden until full report unlocked',
-                          clause: 'Clause X.X',
-                          impact: 'This risk has significant financial and commercial implications that require your attention before signing.',
-                          detail: 'Detailed analysis of this risk is available in the full report.',
-                          recommendation: 'Specific negotiation strategy and recommended action to protect your position.',
-                        }}
-                      />
-                    </div>
-                  ))}
+            {preview.preview_risk ? (
+              <div className="mb-10">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="font-kanit text-2xl font-black text-mason-black">Fast Preview</h2>
+                  {!report.paid ? (
+                    <span className="rounded-full bg-mason-gray-100 px-3 py-1 text-xs font-semibold text-mason-gray-500">
+                      First risk unlocked
+                    </span>
+                  ) : null}
                 </div>
+                <RiskCard risk={preview.preview_risk} />
+              </div>
+            ) : null}
 
-                {/* Paywall overlay */}
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-white/20 to-white/95">
-                  <div className="text-center bg-white border border-mason-gray-100 rounded-2xl shadow-lg p-8 mx-4 max-w-sm">
-                    <div className="text-4xl mb-3">🔒</div>
-                    <h3 className="font-kanit font-black text-xl text-mason-black mb-2" style={{ fontFamily: 'Kanit, sans-serif' }}>
-                      {totalRisks - 1} more risk{totalRisks - 1 !== 1 ? 's' : ''} identified
-                    </h3>
-                    <p className="text-sm text-mason-gray-500 font-inter mb-5 leading-relaxed">
-                      Unlock the complete risk register, financial summary, and your action plan before signing.
-                    </p>
-                    <button
-                      onClick={handleUpgrade}
-                      disabled={paying}
-                      className="w-full bg-mason-black text-white font-semibold font-inter py-3.5 rounded-xl text-sm hover:bg-mason-gray-800 transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
-                    >
-                      {paying && <span className="w-4 h-4 border border-white border-t-transparent rounded-full animate-spin" />}
-                      Unlock Full Report — $799
-                    </button>
-                    <p className="text-xs text-mason-gray-400 font-inter mt-3">
-                      One-time payment · Instant access · Secure checkout
-                    </p>
+            {isFullProcessing ? (
+              <div className="mb-10 rounded-3xl border border-mason-gray-100 bg-mason-gray-50 p-8 text-center">
+                <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-2 border-mason-black border-t-transparent" />
+                <p className="text-lg font-semibold text-mason-black">Building your full report</p>
+                <p className="mt-2 text-sm text-mason-gray-500">
+                  {processingCopy(report.jurisdiction, true)}
+                </p>
+              </div>
+            ) : null}
+
+            {!report.paid ? (
+              <div className="mb-10 rounded-3xl border-2 border-mason-black p-8 text-center">
+                <p className="font-kanit text-2xl font-black text-mason-black">Unlock the full report</p>
+                <p className="mt-3 text-sm leading-relaxed text-mason-gray-500">
+                  The fast preview is ready. Unlock the complete risk register, financial summary, and action plan on demand.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleUpgrade}
+                  disabled={paying}
+                  className="mt-5 rounded-xl bg-mason-black px-6 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {paying ? 'Redirecting...' : 'Unlock Full Report - $799'}
+                </button>
+              </div>
+            ) : null}
+
+            {report.paid && full ? (
+              <>
+                <div className="mb-8">
+                  <h2 className="mb-4 font-kanit text-2xl font-black text-mason-black">Full Risk Register</h2>
+                  <div className="space-y-4">
+                    {full.risks.map(risk => (
+                      <RiskCard key={risk.id} risk={risk} />
+                    ))}
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
-        </div>
 
-        {/* ── Financial Summary (paid only) ─────────────────────────────────── */}
-        {report.paid && full?.financial_summary && (
-          <div className="mb-8">
-            <h2 className="font-kanit font-black text-xl text-mason-black mb-4" style={{ fontFamily: 'Kanit, sans-serif' }}>
-              Financial Summary
-            </h2>
-            <div className="border border-mason-gray-100 rounded-2xl p-5 space-y-4">
-              <div className="grid sm:grid-cols-2 gap-4">
-                {[
-                  { label: 'Contract sum', value: full.financial_summary.contract_sum ?? 'Not specified' },
-                  { label: 'Payment terms', value: full.financial_summary.payment_terms },
-                  { label: 'Liquidated damages', value: full.financial_summary.liquidated_damages ?? 'None stated' },
-                  { label: 'Retention', value: full.financial_summary.retention ?? 'None stated' },
-                ].map(item => (
-                  <div key={item.label}>
-                    <p className="text-xs font-semibold text-mason-gray-400 uppercase tracking-wide font-inter mb-1">{item.label}</p>
-                    <p className="text-sm text-mason-black font-inter">{item.value}</p>
+                <div className="mb-8 rounded-2xl border border-mason-gray-100 p-5">
+                  <h2 className="mb-4 font-kanit text-2xl font-black text-mason-black">Financial Summary</h2>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {[
+                      { label: 'Contract sum', value: full.financial_summary.contract_sum ?? 'Not specified' },
+                      { label: 'Payment terms', value: full.financial_summary.payment_terms },
+                      { label: 'Liquidated damages', value: full.financial_summary.liquidated_damages ?? 'Not specified' },
+                      { label: 'Retention', value: full.financial_summary.retention ?? 'Not specified' },
+                    ].map(item => (
+                      <div key={item.label}>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">{item.label}</p>
+                        <p className="mt-1 text-sm text-mason-black">{item.value}</p>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-              {full.financial_summary.key_financial_risks.length > 0 && (
-                <div className="border-t border-mason-gray-100 pt-4">
-                  <p className="text-xs font-semibold text-mason-gray-400 uppercase tracking-wide font-inter mb-2">Key financial risks</p>
-                  <ul className="space-y-1">
-                    {full.financial_summary.key_financial_risks.map((r, i) => (
-                      <li key={i} className="text-sm text-mason-gray-700 font-inter flex items-start gap-2">
-                        <span className="text-risk-high mt-0.5">!</span>{r}
+                  <div className="mt-5">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">Key financial risks</p>
+                    <ul className="mt-2 space-y-2">
+                      {full.financial_summary.key_financial_risks.map((item, index) => (
+                        <li key={`${item}-${index}`} className="text-sm text-mason-gray-700">
+                          • {item}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-mason-gray-100 p-5">
+                  <h2 className="mb-4 font-kanit text-2xl font-black text-mason-black">Immediate Actions</h2>
+                  <ol className="space-y-3">
+                    {full.immediate_actions.map((item, index) => (
+                      <li key={`${item}-${index}`} className="flex gap-3 text-sm text-mason-gray-700">
+                        <span className="font-kanit text-lg font-black text-mason-gray-300">{String(index + 1).padStart(2, '0')}</span>
+                        <span>{item}</span>
                       </li>
                     ))}
-                  </ul>
+                  </ol>
                 </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ── Immediate Actions (paid only) ─────────────────────────────────── */}
-        {report.paid && full?.immediate_actions && full.immediate_actions.length > 0 && (
-          <div className="mb-10">
-            <h2 className="font-kanit font-black text-xl text-mason-black mb-4" style={{ fontFamily: 'Kanit, sans-serif' }}>
-              Before You Sign — Action Plan
-            </h2>
-            <div className="border-2 border-mason-black rounded-2xl p-5">
-              <ul className="space-y-3">
-                {full.immediate_actions.map((action, i) => (
-                  <li key={i} className="flex items-start gap-3">
-                    <span className="font-kanit font-black text-lg text-mason-gray-200 leading-none pt-0.5 min-w-[28px]" style={{ fontFamily: 'Kanit, sans-serif' }}>
-                      {String(i + 1).padStart(2, '0')}
-                    </span>
-                    <p className="text-sm text-mason-black font-inter leading-relaxed">{action}</p>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {/* ── Footer disclaimer ─────────────────────────────────────────────── */}
-        <div className="border-t border-mason-gray-100 pt-6">
-          <p className="text-xs text-mason-gray-400 font-inter leading-relaxed text-center">
-            This review is generated by AI and is for informational purposes only.
-            It does not constitute legal advice. Always consult a qualified construction
-            lawyer before executing any contract. Mason © 2026 · gomason.ai
-          </p>
-        </div>
+              </>
+            ) : null}
+          </>
+        ) : null}
       </div>
     </div>
   );

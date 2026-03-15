@@ -13,6 +13,7 @@ create table if not exists profiles (
   first_name   text not null,
   last_name    text not null,
   company_name text not null,
+  country      text check (country in ('AU','UK','USA')),
   phone        text,
   website      text,
   created_at   timestamptz default now()
@@ -27,6 +28,10 @@ create table if not exists reports (
                     check (status in ('uploading','processing','complete','error')),
   contract_type     text not null default 'subcontract'
                     check (contract_type in ('subcontract','head_contract')),
+  jurisdiction      text not null default 'AU'
+                    check (jurisdiction in ('AU','UK','USA')),
+  analysis_stage    text not null default 'preview'
+                    check (analysis_stage in ('preview','full')),
   file_count        integer not null default 0,
   preview_data      jsonb,
   full_data         jsonb,

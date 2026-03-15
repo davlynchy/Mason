@@ -2,13 +2,19 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Mason — Contract Risk Review',
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'),
+  title: 'Mason - Contract Risk Review',
   description: 'AI-powered contract analysis for construction professionals. Know every risk before you sign.',
   icons: {
-    icon: '/favicon.png',
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/favicon.png', type: 'image/png' },
+    ],
+    shortcut: '/favicon.svg',
+    apple: '/favicon.svg',
   },
   openGraph: {
-    title: 'Mason — Contract Risk Review',
+    title: 'Mason - Contract Risk Review',
     description: 'Know every risk before you sign. AI-powered contract analysis for construction.',
     url: 'https://gomason.ai',
     siteName: 'Mason',

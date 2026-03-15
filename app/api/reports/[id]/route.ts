@@ -11,7 +11,7 @@ export async function GET(
 
     const { data, error } = await supabase
       .from('reports')
-      .select('id, status, paid, contract_type, preview_data, full_data, error_message')
+      .select('id, status, paid, contract_type, jurisdiction, analysis_stage, preview_data, full_data, error_message')
       .eq('id', id)
       .single();
 
@@ -25,6 +25,8 @@ export async function GET(
       status:       data.status,
       paid:         data.paid,
       contractType: data.contract_type,
+      jurisdiction: data.jurisdiction,
+      analysisStage:data.analysis_stage,
       previewData:  data.preview_data,
       fullData:     data.paid ? data.full_data : null,
       errorMessage: data.error_message,

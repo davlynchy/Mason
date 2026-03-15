@@ -5,11 +5,11 @@ export async function POST(req: NextRequest) {
   try {
     const {
       firstName, lastName, email, password,
-      companyName, phone, website, contractType, fileCount,
+      companyName, phone, website, contractType, jurisdiction, fileCount,
     } = await req.json();
 
     // Validate required fields
-    if (!firstName || !lastName || !email || !password || !companyName || !contractType) {
+    if (!firstName || !lastName || !email || !password || !companyName || !contractType || !jurisdiction) {
       return NextResponse.json({ error: 'All required fields must be filled.' }, { status: 400 });
     }
 
@@ -56,6 +56,7 @@ export async function POST(req: NextRequest) {
         first_name:   firstName,
         last_name:    lastName,
         company_name: companyName,
+        country:      jurisdiction,
         phone:        phone || null,
         website:      website || null,
       });
@@ -73,6 +74,8 @@ export async function POST(req: NextRequest) {
         email,
         status:        'uploading',
         contract_type: contractType,
+        jurisdiction,
+        analysis_stage:'preview',
         file_count:    fileCount ?? 0,
         paid:          false,
       })

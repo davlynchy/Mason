@@ -3,28 +3,212 @@ import mammoth from 'mammoth';
 import { PDFParse } from 'pdf-parse';
 import { downloadFromR2 } from './r2';
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const MIN_PDF_TEXT_LENGTH = 500;
-const MAX_SCANNED_PDF_PAGES = 12;
-const PDF_IMAGE_WIDTH = 1400;
+export type Jurisdiction = 'AU' | 'UK' | 'USA';
+export type AnalysisStage = 'preview' | 'full';
 
-interface ExtractedImage {
-  base64: string;
-  mediaType: string;
-  pageNumber?: number;
-}
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const MIN_EMBEDDED_PDF_TEXT = 1200;
+const MAX_TEXT_CHARS_PER_FILE = 50000;
 
 interface ExtractedFile {
+  fileData?: string;
+  filename?: string;
   text?: string;
   base64?: string;
   mediaType?: string;
-  images?: ExtractedImage[];
 }
 
-export async function extractTextFromFile(
-  r2Key: string,
-  filename: string
-): Promise<ExtractedFile> {
+export interface RiskItem {
+  id: string;
+  level: 'HIGH' | 'MEDIUM' | 'LOW';
+  title: string;
+  clause: string | null;
+  impact: string;
+  detail: string;
+  recommendation: string;
+}
+
+export interface PreviewAnalysisResult {
+  executive_summary: string;
+  contract_details: {
+    parties: string;
+    contract_value: string | null;
+    contract_type: string;
+    key_dates: string;
+  };
+  risk_count: { high: number; medium: number; low: number };
+  preview_risk: RiskItem | null;
+}
+
+export interface FullAnalysisResult {
+  risks: RiskItem[];
+  financial_summary: {
+    contract_sum: string | null;
+    payment_terms: string;
+    liquidated_damages: string | null;
+    retention: string | null;
+    key_financial_risks: string[];
+  };
+  immediate_actions: string[];
+}
+
+function getJurisdictionLabel(jurisdiction: Jurisdiction): string {
+  switch (jurisdiction) {
+    case 'AU':
+      return 'Australian construction law';
+    case 'UK':
+      return 'UK construction law';
+    case 'USA':
+      return 'United States construction law';
+  }
+}
+
+function getJurisdictionRules(jurisdiction: Jurisdiction): string[] {
+  switch (jurisdiction) {
+    case 'AU':
+      return [
+        'AS4000-1997, AS2124-1992, AS4300-1995, AS2545-1993, ABIC contracts',
+        'Security of Payment legislation across Australian states and territories',
+        'Common subcontractor risks in Australian construction contracts',
+      ];
+    case 'UK':
+      return [
+        'JCT, NEC, and bespoke UK construction contracts',
+        'Housing Grants, Construction and Regeneration Act 1996 and adjudication regime',
+        'Payment notice, pay less notice, set-off, and extension-of-time risks in UK construction contracts',
+      ];
+    case 'USA':
+      return [
+        'AIA, ConsensusDocs, EJCDC, and bespoke US construction contracts',
+        'State-by-state prompt payment, lien, indemnity, and pay-if-paid or pay-when-paid issues',
+        'Common US subcontractor and general contractor allocation-of-risk clauses',
+      ];
+  }
+}
+
+function buildSystemPrompt(jurisdiction: Jurisdiction): string {
+  const rules = getJurisdictionRules(jurisdiction)
+    .map(rule => `- ${rule}`)
+    .join('\n');
+
+  return `You are Mason, an expert construction contract analyst with deep knowledge of ${getJurisdictionLabel(jurisdiction)}.
+
+You analyse construction contracts from the perspective of the party engaging you. You identify materially risky clauses, explain the commercial impact, and provide direct negotiation recommendations.
+
+Your knowledge includes:
+${rules}
+
+CRITICAL RULES:
+1. NEVER hallucinate. Only report what is actually in the documents provided.
+2. Be specific about clause numbers whenever possible.
+3. If a document is unreadable or too brief, say so.
+4. For HIGH risks, be direct and unambiguous about the financial exposure.
+5. Recommendations must be specific and actionable.
+6. Return ONLY valid JSON - no preamble, no markdown, no code fences.`;
+}
+
+function buildPreviewPrompt(
+  contractType: 'subcontract' | 'head_contract',
+  jurisdiction: Jurisdiction
+): string {
+  const perspective = contractType === 'subcontract'
+    ? 'subcontractor'
+    : 'head contractor / main contractor';
+
+  return `You are acting for the ${perspective}.
+
+Review the provided contract under ${getJurisdictionLabel(jurisdiction)} and return a FAST PREVIEW in this exact JSON shape:
+
+{
+  "executive_summary": "2-4 direct sentences",
+  "contract_details": {
+    "parties": "Parties as stated, or 'Not clearly identified'",
+    "contract_value": "Contract sum as stated, or null",
+    "contract_type": "Type of contract as stated",
+    "key_dates": "Important dates as stated, or 'Not clearly stated'"
+  },
+  "risk_count": {
+    "high": <integer>,
+    "medium": <integer>,
+    "low": <integer>
+  },
+  "preview_risk": {
+    "id": "R01",
+    "level": "HIGH",
+    "title": "Short title",
+    "clause": "Clause reference or null",
+    "impact": "One-sentence impact",
+    "detail": "2-4 sentence explanation",
+    "recommendation": "Specific action"
+  }
+}
+
+Requirements:
+- Prioritise speed and the single most important risk.
+- Estimate total risk counts across the contract even if you only fully explain one risk.
+- If no HIGH risk exists, use the most important MEDIUM risk as preview_risk.
+- If the contract is unreadable, say so in executive_summary and set preview_risk to null.`;
+}
+
+function buildFullPrompt(
+  contractType: 'subcontract' | 'head_contract',
+  jurisdiction: Jurisdiction
+): string {
+  const perspective = contractType === 'subcontract'
+    ? 'subcontractor'
+    : 'head contractor / main contractor';
+
+  return `You are acting for the ${perspective}.
+
+Analyse all documents under ${getJurisdictionLabel(jurisdiction)} and return the FULL report in this exact JSON shape:
+
+{
+  "risks": [
+    {
+      "id": "R01",
+      "level": "HIGH",
+      "title": "Short title",
+      "clause": "Clause reference or null",
+      "impact": "One-sentence impact",
+      "detail": "2-4 sentence explanation",
+      "recommendation": "Specific action"
+    }
+  ],
+  "financial_summary": {
+    "contract_sum": "Contract sum or null",
+    "payment_terms": "Payment terms as stated",
+    "liquidated_damages": "LD regime or null",
+    "retention": "Retention regime or null",
+    "key_financial_risks": [
+      "Risk bullet 1",
+      "Risk bullet 2"
+    ]
+  },
+  "immediate_actions": [
+    "Specific action 1",
+    "Specific action 2",
+    "Specific action 3",
+    "Specific action 4",
+    "Specific action 5"
+  ]
+}
+
+Requirements:
+- Return ALL HIGH risks first, then MEDIUM, then LOW.
+- Focus on legally and commercially material issues.
+- Keep IDs stable and sequential.
+- Minimum of 5 risks if this is a substantive contract.`;
+}
+
+function cleanJsonResponse(raw: string): string {
+  return raw
+    .replace(/^```json\s*/m, '')
+    .replace(/^```\s*/m, '')
+    .replace(/```\s*$/m, '')
+    .trim();
+}
+
+async function extractFileForAnalysis(r2Key: string, filename: string): Promise<ExtractedFile> {
   const buffer = await downloadFromR2(r2Key);
   const ext = filename.split('.').pop()?.toLowerCase() ?? '';
 
@@ -44,56 +228,16 @@ export async function extractTextFromFile(
       const result = await parser.getText();
       const text = result.text?.trim();
 
-      if (text && text.length >= MIN_PDF_TEXT_LENGTH) {
+      if (text && text.length >= MIN_EMBEDDED_PDF_TEXT) {
         return { text };
       }
 
-      const screenshots = await parser.getScreenshot({
-        first: MAX_SCANNED_PDF_PAGES,
-        desiredWidth: PDF_IMAGE_WIDTH,
-        imageDataUrl: false,
-        imageBuffer: true,
-      });
-
-      const images = screenshots.pages.map(page => ({
-        base64: Buffer.from(page.data).toString('base64'),
-        mediaType: 'image/png',
-        pageNumber: page.pageNumber,
-      }));
-
-      const notes: string[] = [];
-      if (text) {
-        notes.push(
-          `[Partial PDF text extracted from ${filename}. The document may be scanned or image-based, so rendered page images are included for OCR-style analysis.]`
-        );
-        notes.push(text.slice(0, 12000));
-      } else {
-        notes.push(
-          `[No embedded PDF text was found in ${filename}. Using rendered page images for OCR-style analysis instead.]`
-        );
-      }
-
-      if (screenshots.total > MAX_SCANNED_PDF_PAGES) {
-        notes.push(
-          `[Only the first ${MAX_SCANNED_PDF_PAGES} pages were rendered for this scanned PDF. Split very large scanned contracts into logical sections for better speed and completeness.]`
-        );
-      }
-
-      if (images.length > 0) {
-        return {
-          text: notes.join('\n\n'),
-          images,
-        };
-      }
-
       return {
-        text: `[PDF file: ${filename}. Text extraction returned no readable text. The file may be scanned or image-only.]`,
-      };
-    } catch (error) {
-      return {
-        text: `[PDF file: ${filename}. Text extraction failed: ${
-          error instanceof Error ? error.message : 'unknown error'
-        }]`,
+        filename,
+        fileData: `data:application/pdf;base64,${buffer.toString('base64')}`,
+        text: text
+          ? `[Limited embedded text was extracted from ${filename}. Use the native PDF input for OCR/page understanding as the source of truth.]\n\n${text.slice(0, 8000)}`
+          : `[No embedded text was extracted from ${filename}. Use the native PDF input for OCR/page understanding as the source of truth.]`,
       };
     } finally {
       await parser.destroy();
@@ -116,145 +260,20 @@ export async function extractTextFromFile(
   }
 
   if (ext === 'xlsx' || ext === 'xls') {
-    return { text: `[Excel file: ${filename}. Content extraction limited in this version.]` };
+    return { text: `[Excel file: ${filename}. Content extraction is limited. Use only clearly readable financial or schedule information that appears in the extracted content.]` };
   }
 
   return { text: `[Unsupported file type: ${filename}]` };
 }
 
-const SYSTEM_PROMPT = `You are Mason, an expert construction contract analyst with deep knowledge of Australian construction law.
-
-You analyse construction contracts from the perspective of the party engaging you (subcontractor or head contractor). You identify every risk, flag clauses that are commercially onerous, and give specific, actionable recommendations.
-
-Your knowledge includes:
-- AS4000-1997, AS2124-1992, AS4300-1995, AS2545-1993, ABIC contracts
-- Building and Construction Industry (Security of Payment) Act 2021 (WA)
-- Building and Construction Industry Security of Payment Act 1999 (NSW)
-- Building Industry Fairness (Security of Payment) Act 2017 (QLD)
-- Security of Payment Acts for all other Australian states and territories
-- Standard subcontractor rights: EOT notices, variation entitlements, suspension rights, adjudication
-- Common risk areas: NIL delay costs, uncapped LDs, scope catch-alls, pay-when-paid clauses, set-off rights, insurance requirements, retention terms
-
-CRITICAL RULES:
-1. NEVER hallucinate. Only report what is actually in the documents provided.
-2. Be specific about clause numbers whenever possible.
-3. If a document is unreadable or too brief, say so.
-4. For HIGH risks, be direct and unambiguous about the financial exposure.
-5. Recommendations must be specific and actionable (e.g. "Negotiate deletion of Clause 12.3" not "Review this clause").
-6. Return ONLY valid JSON - no preamble, no markdown, no code fences.`;
-
-function buildUserPrompt(contractType: 'subcontract' | 'head_contract'): string {
-  const perspective = contractType === 'subcontract'
-    ? "subcontractor - analyse this subcontract to protect the subcontractor's commercial position"
-    : "main contractor / head contractor - analyse this head contract to protect the contractor's position";
-
-  return `You are acting for the ${perspective}.
-
-Analyse ALL documents provided and return a comprehensive risk review in this EXACT JSON format:
-
-{
-  "executive_summary": "2-4 sentence summary of the contract and overall risk profile. Be direct.",
-  "contract_details": {
-    "parties": "Head contractor and subcontractor names as stated",
-    "contract_value": "The contract sum or subcontract sum as stated, or null if not found",
-    "contract_type": "Type of contract (e.g. AS4000 Amended Subcontract, lump sum, etc.)",
-    "key_dates": "Any identified dates - SC date, practical completion, programme dates"
-  },
-  "risk_count": {
-    "high": <integer>,
-    "medium": <integer>,
-    "low": <integer>
-  },
-  "risks": [
-    {
-      "id": "R01",
-      "level": "HIGH",
-      "title": "Short descriptive title (max 10 words)",
-      "clause": "Clause X.X or Annexure Part X, or null",
-      "impact": "One sentence describing the commercial or financial impact if this risk materialises",
-      "detail": "2-4 sentences of detailed analysis. Quote the relevant clause text where possible. Explain WHY this is a risk.",
-      "recommendation": "Specific recommended action - what to negotiate, what to include, what to do before signing. Be concrete."
-    }
-  ],
-  "financial_summary": {
-    "contract_sum": "The contract or subcontract sum, or null",
-    "payment_terms": "Payment period and method as stated (e.g. '25 business days from claim')",
-    "liquidated_damages": "LD rate and any cap, or null if not stated",
-    "retention": "Retention rate, cap amount, and release terms, or null",
-    "key_financial_risks": [
-      "Brief bullet of key financial risk 1",
-      "Brief bullet of key financial risk 2"
-    ]
-  },
-  "immediate_actions": [
-    "Specific action 1 to take before signing",
-    "Specific action 2",
-    "Specific action 3",
-    "Specific action 4",
-    "Specific action 5"
-  ]
-}
-
-RISK CLASSIFICATION GUIDE:
-- HIGH: Direct financial exposure, rights-waiving clauses, programme issues that are already locked in, uncapped liability, NIL delay costs, severely one-sided payment terms, missing SOP Act protections
-- MEDIUM: Notice period traps, variation omission rights, painting/interface risks, termination for convenience with limited payment, sub-subcontractor consent requirements, insurance gaps
-- LOW: Below-market rates, retention without bonding, minor ambiguities, standard clauses that are unfavourable but not unusual
-
-PRIORITY RISKS TO LOOK FOR (for subcontracts):
-1. NIL delay costs or delay cost caps
-2. Uncapped liquidated damages
-3. Programme already behind before signing (SC date unachievable)
-4. Pay-when-paid / pay-if-paid clauses
-5. Entire agreement clauses wiping out subcontractor's own T&Cs
-6. Scope catch-alls ("reasonable subcontractor" standard)
-7. EOT notice periods shorter than 7 days
-8. Retention held in cash without security
-9. Slow payment periods (beyond 15 business days)
-10. Set-off rights without limitation
-11. Right of omission without margin protection
-12. Termination for convenience with no lost-profit compensation
-13. Uncapped indemnities
-14. Fixed price with no rise-and-fall provision
-
-Order risks: ALL HIGH risks first (sorted by severity), then ALL MEDIUM, then ALL LOW.
-Minimum: identify at least 5 risks if the document is a real contract. If fewer than 5 risks exist, the document is likely not a contract.`;
-}
-
-export interface AnalysisResult {
-  executive_summary: string;
-  contract_details: {
-    parties: string;
-    contract_value: string | null;
-    contract_type: string;
-    key_dates: string;
-  };
-  risk_count: { high: number; medium: number; low: number };
-  risks: Array<{
-    id: string;
-    level: 'HIGH' | 'MEDIUM' | 'LOW';
-    title: string;
-    clause: string | null;
-    impact: string;
-    detail: string;
-    recommendation: string;
-  }>;
-  financial_summary: {
-    contract_sum: string | null;
-    payment_terms: string;
-    liquidated_damages: string | null;
-    retention: string | null;
-    key_financial_risks: string[];
-  };
-  immediate_actions: string[];
-}
-
-export async function analyseContract(
+async function buildMessages(
   r2Keys: string[],
   filenames: string[],
-  contractType: 'subcontract' | 'head_contract'
-): Promise<AnalysisResult> {
+  systemPrompt: string,
+  userPrompt: string
+): Promise<OpenAI.Chat.Completions.ChatCompletionMessageParam[]> {
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt },
   ];
 
   for (let i = 0; i < r2Keys.length; i++) {
@@ -267,9 +286,28 @@ export async function analyseContract(
     });
 
     try {
-      const extracted = await extractTextFromFile(key, filename);
+      const extracted = await extractFileForAnalysis(key, filename);
 
-      if (extracted.base64 && extracted.mediaType) {
+      if (extracted.fileData && extracted.filename) {
+        const content: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [];
+
+        if (extracted.text) {
+          content.push({
+            type: 'text',
+            text: extracted.text,
+          });
+        }
+
+        content.push({
+          type: 'file',
+          file: {
+            filename: extracted.filename,
+            file_data: extracted.fileData,
+          },
+        } as never);
+
+        messages.push({ role: 'user', content });
+      } else if (extracted.base64 && extracted.mediaType) {
         messages.push({
           role: 'user',
           content: [
@@ -281,32 +319,11 @@ export async function analyseContract(
             },
           ],
         });
-      } else if (extracted.images?.length) {
-        const content: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [];
-
-        if (extracted.text) {
-          content.push({
-            type: 'text',
-            text: extracted.text,
-          });
-        }
-
-        for (const image of extracted.images) {
-          content.push({
-            type: 'image_url',
-            image_url: {
-              url: `data:${image.mediaType};base64,${image.base64}`,
-            },
-          });
-        }
-
+      } else if (extracted.text) {
         messages.push({
           role: 'user',
-          content,
+          content: extracted.text.slice(0, MAX_TEXT_CHARS_PER_FILE),
         });
-      } else if (extracted.text) {
-        const truncated = extracted.text.slice(0, 80000);
-        messages.push({ role: 'user', content: truncated });
       }
     } catch (err) {
       messages.push({
@@ -318,51 +335,79 @@ export async function analyseContract(
 
   messages.push({
     role: 'user',
-    content: buildUserPrompt(contractType),
+    content: userPrompt,
   });
+
+  return messages;
+}
+
+async function runModel<T>(
+  r2Keys: string[],
+  filenames: string[],
+  systemPrompt: string,
+  userPrompt: string,
+  maxTokens: number
+): Promise<T> {
+  const messages = await buildMessages(r2Keys, filenames, systemPrompt, userPrompt);
 
   const response = await client.chat.completions.create({
     model: 'gpt-4o',
-    max_tokens: 8192,
+    max_tokens: maxTokens,
     messages,
   });
 
   const raw = response.choices[0]?.message?.content ?? '';
-  const cleaned = raw
-    .replace(/^```json\s*/m, '')
-    .replace(/^```\s*/m, '')
-    .replace(/```\s*$/m, '')
-    .trim();
+  return JSON.parse(cleanJsonResponse(raw)) as T;
+}
 
-  const result: AnalysisResult = JSON.parse(cleaned);
+export async function analysePreviewContract(
+  r2Keys: string[],
+  filenames: string[],
+  contractType: 'subcontract' | 'head_contract',
+  jurisdiction: Jurisdiction
+): Promise<PreviewAnalysisResult> {
+  const result = await runModel<PreviewAnalysisResult>(
+    r2Keys,
+    filenames,
+    buildSystemPrompt(jurisdiction),
+    buildPreviewPrompt(contractType, jurisdiction),
+    2200
+  );
+
+  return {
+    executive_summary: result.executive_summary,
+    contract_details: result.contract_details,
+    risk_count: result.risk_count,
+    preview_risk: result.preview_risk,
+  };
+}
+
+export async function analyseFullContract(
+  r2Keys: string[],
+  filenames: string[],
+  contractType: 'subcontract' | 'head_contract',
+  jurisdiction: Jurisdiction
+): Promise<FullAnalysisResult> {
+  const result = await runModel<FullAnalysisResult>(
+    r2Keys,
+    filenames,
+    buildSystemPrompt(jurisdiction),
+    buildFullPrompt(contractType, jurisdiction),
+    5000
+  );
 
   if (!result.risks || !Array.isArray(result.risks)) {
     throw new Error('AI returned invalid structure - no risks array');
   }
 
-  return result;
-}
-
-export function splitAnalysis(result: AnalysisResult) {
   const ordered = [...result.risks].sort((a, b) => {
     const order = { HIGH: 0, MEDIUM: 1, LOW: 2 };
     return order[a.level] - order[b.level];
   });
 
-  const previewRisk = ordered[0] ?? null;
-
-  const previewData = {
-    executive_summary: result.executive_summary,
-    contract_details: result.contract_details,
-    risk_count: result.risk_count,
-    preview_risk: previewRisk,
-  };
-
-  const fullData = {
+  return {
     risks: ordered,
     financial_summary: result.financial_summary,
     immediate_actions: result.immediate_actions,
   };
-
-  return { previewData, fullData };
 }

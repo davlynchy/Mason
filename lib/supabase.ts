@@ -49,6 +49,8 @@ export interface Report {
   email: string;
   status: 'uploading' | 'processing' | 'complete' | 'error';
   contract_type: 'subcontract' | 'head_contract';
+  jurisdiction: 'AU' | 'UK' | 'USA';
+  analysis_stage: 'preview' | 'full';
   file_count: number;
   preview_data: Record<string, unknown> | null;
   full_data: Record<string, unknown> | null;
@@ -65,6 +67,7 @@ export interface Profile {
   first_name: string;
   last_name: string;
   company_name: string;
+  country: 'AU' | 'UK' | 'USA' | null;
   phone: string | null;
   website: string | null;
   created_at: string;

@@ -1,203 +1,171 @@
-# Mason — Contract Risk Review MVP
+# Mason
 
-**gomason.ai** · AI-powered contract analysis for construction professionals
+AI-powered contract review for construction professionals.
 
----
+## What It Does
 
-## What This Builds
+Mason lets a user:
 
-A single-page landing site where:
-1. User drops contract documents (up to 1 GB, any combination of PDF / DOCX / XLSX / PNG / JPG)
-2. Fills in a short registration form + selects subcontract or head contract
-3. Files upload directly to Cloudflare R2 (presigned PUT — bypasses your server entirely)
-4. Claude Sonnet analyses all documents against Australian construction law
-5. Report page shows free preview (exec summary + first HIGH risk)
-6. Stripe payment unlocks the full risk register + financial summary + action plan
-
----
+1. Upload contract documents directly to Cloudflare R2
+2. Create an account or log back in as a returning customer
+3. Choose the legal jurisdiction for review: `AU`, `UK`, or `USA`
+4. Receive a fast preview first:
+   - executive summary
+   - contract details
+   - total risk counts
+   - first key risk
+5. Unlock the full report after payment:
+   - complete risk register
+   - financial summary
+   - immediate action plan
 
 ## Stack
 
 | Layer | Service |
-|-------|---------|
-| Frontend + API | Next.js 14 (App Router) on Vercel |
+|---|---|
+| Frontend + API | Next.js 14 App Router |
 | Auth + Database | Supabase |
-| File Storage | Cloudflare R2 (zero egress fees) |
-| AI Analysis | Anthropic Claude claude-sonnet-4-20250514 |
+| File Storage | Cloudflare R2 |
+| AI Analysis | OpenAI |
 | Payments | Stripe Checkout |
 
----
+## Key Product Flow
+
+### New customer
+
+1. Upload files
+2. Fill in signup form
+3. Pick jurisdiction and contract type
+4. Mason runs a fast preview analysis
+5. User sees preview immediately
+6. User pays to unlock the full report
+7. Mason runs the full analysis only after payment
+
+### Returning customer
+
+1. Log in with existing email and password
+2. Jump to the latest report
+3. If already paid, full report is shown
+4. If not yet paid, preview is shown and full report can be unlocked
 
 ## Setup
 
-### 1. Clone and install
+### 1. Install
 
 ```bash
-git clone <your-repo>
-cd mason-mvp
 npm install
-cp .env.example .env.local
 ```
+
+Create `.env.local` from `.env.example`.
 
 ### 2. Supabase
 
-1. Create a new project at [supabase.com](https://supabase.com)
-2. Go to **Database → SQL Editor → New query**
-3. Paste and run the contents of `supabase/migrations/001_initial.sql`
-4. Copy your project URL and keys from **Settings → API**
+Create a Supabase project, then run:
+
+- [supabase/migrations/001_initial.sql](/c:/Users/DavidLynch/mason-mvp/supabase/migrations/001_initial.sql)
+- [supabase/migrations/002_add_jurisdiction_and_analysis_stage.sql](/c:/Users/DavidLynch/mason-mvp/supabase/migrations/002_add_jurisdiction_and_analysis_stage.sql)
+
+Important:
+- `001_initial.sql` is for fresh setup
+- `002_add_jurisdiction_and_analysis_stage.sql` must also be run if your database was created before the staged-analysis upgrade
 
 ### 3. Cloudflare R2
 
-1. Go to [dash.cloudflare.com](https://dash.cloudflare.com) → **R2**
-2. Create a bucket: `mason-contracts`
-3. Create an API token with **Object Read & Write** permissions
-4. Enable **CORS** on the bucket:
+Configure a bucket and enable CORS similar to:
 
 ```json
 [
   {
-    "AllowedOrigins": ["https://gomason.ai", "http://localhost:3000"],
-    "AllowedMethods": ["GET", "PUT", "HEAD"],
-    "AllowedHeaders": ["*"],
+    "AllowedOrigins": [
+      "http://localhost:3000",
+      "https://gomason.ai"
+    ],
+    "AllowedMethods": [
+      "GET",
+      "PUT",
+      "HEAD"
+    ],
+    "AllowedHeaders": [
+      "*"
+    ],
+    "ExposeHeaders": [
+      "ETag"
+    ],
     "MaxAgeSeconds": 3600
   }
 ]
 ```
 
-5. Copy Account ID, Access Key ID, Secret Access Key into `.env.local`
+Recommended env setup:
 
-### 4. Anthropic API
+```env
+CLOUDFLARE_R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+CLOUDFLARE_R2_BUCKET_NAME=<bucket-name>
+CLOUDFLARE_R2_ACCESS_KEY_ID=...
+CLOUDFLARE_R2_SECRET_ACCESS_KEY=...
+```
 
-1. Go to [console.anthropic.com](https://console.anthropic.com)
-2. Create an API key
-3. Add to `.env.local` as `ANTHROPIC_API_KEY`
+### 4. OpenAI
+
+Add an OpenAI API key:
+
+```env
+OPENAI_API_KEY=sk-...
+```
 
 ### 5. Stripe
 
-1. Create account at [stripe.com](https://stripe.com)
-2. Copy publishable key and secret key (use test keys first)
-3. Set up webhook:
-   - **Developers → Webhooks → Add endpoint**
-   - URL: `https://gomason.ai/api/webhook`
-   - Events: `checkout.session.completed`
-   - Copy webhook signing secret
+Add:
 
-### 6. Fill in .env.local
+```env
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...
+```
+
+### 6. App env
+
+At minimum:
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
 
-CLOUDFLARE_R2_ACCOUNT_ID=abc123
-CLOUDFLARE_R2_ACCESS_KEY_ID=xxx
-CLOUDFLARE_R2_SECRET_ACCESS_KEY=xxx
-CLOUDFLARE_R2_BUCKET_NAME=mason-contracts
-
-ANTHROPIC_API_KEY=sk-ant-...
-
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...
+OPENAI_API_KEY=sk-...
 
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 REPORT_PRICE_AUD=79900
 ```
 
-### 7. Run locally
+## Run Locally
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+Open `http://localhost:3000`.
 
----
+## Notes
 
-## Deploy to Vercel
+### Why staged analysis?
 
-```bash
-npm install -g vercel
-vercel --prod
-```
+Full AI analysis on large contracts can take a while. Mason now:
 
-Add all environment variables in Vercel dashboard → **Settings → Environment Variables**
+- returns a fast preview first
+- defers the heavy full report until after payment
 
-**Important for Vercel:** The `/api/analyse` route can take up to 5 minutes. Set function timeout in `vercel.json`:
+This improves perceived speed and reduces wasted compute.
 
-```json
-{
-  "functions": {
-    "app/api/analyse/route.ts": {
-      "maxDuration": 300
-    }
-  }
-}
-```
+### Scanned PDFs
 
----
+Mason uses:
 
-## Architecture Notes
+- local text extraction for normal text-based PDFs
+- native PDF input to OpenAI when embedded text is limited
 
-### Why direct-to-R2 uploads?
-Files go **browser → R2** via presigned PUT URL. Your server never touches the file bytes. This means:
-- No 4.5 MB serverless body limit issue
-- Files of 1 GB+ work without any special config
-- Upload speed is maximised (no server hop)
+That gives better coverage for scanned contracts than the earlier placeholder-only flow.
 
-### How the analysis works
-1. Each file is downloaded from R2 server-side (inside the `/api/analyse` route)
-2. PDFs → sent as native PDF document blocks to Claude
-3. Images → sent as base64 image blocks (Claude Vision)
-4. DOCX → converted to plain text via mammoth
-5. All content assembled into a single Claude message
-6. Claude returns structured JSON matching the risk review schema
-7. Preview data (exec summary + first risk) saved separately from full data
-8. Full data only returned to the frontend if `paid = true`
+### Deployment
 
-### Paywall
-- Free: executive summary + risk counts + first HIGH risk (full detail)
-- Paid ($799): complete risk register + financial summary + action plan
-- Blur effect + unlock modal covers subsequent risks
-- Stripe Checkout → webhook → `paid = true` on the report record
-
----
-
-## File Structure
-
-```
-mason-mvp/
-├── app/
-│   ├── page.tsx                    ← Landing page + upload + registration
-│   ├── report/[id]/page.tsx        ← Report with paywall
-│   ├── globals.css
-│   ├── layout.tsx
-│   └── api/
-│       ├── upload-url/route.ts     ← Generate presigned R2 PUT URL
-│       ├── reports/
-│       │   ├── route.ts            ← POST: create user + report
-│       │   └── [id]/route.ts       ← GET: fetch report status
-│       ├── analyse/route.ts        ← POST: trigger AI analysis
-│       ├── checkout/route.ts       ← POST: Stripe checkout session
-│       └── webhook/route.ts        ← POST: Stripe webhook (mark paid)
-├── lib/
-│   ├── supabase.ts                 ← Supabase clients + types
-│   ├── r2.ts                       ← Cloudflare R2 helpers
-│   └── ai.ts                       ← Claude analysis engine + prompts
-├── public/
-│   ├── logo.png
-│   └── favicon.png
-└── supabase/
-    └── migrations/001_initial.sql  ← Full database schema
-```
-
----
-
-## Phase 2 Extensions
-
-- Email confirmation + magic link access to saved reports
-- PDF download of full report (using Puppeteer or react-pdf)
-- Dashboard: list of all reports for logged-in user
-- Webhook: send report-ready email notification
-- Multi-jurisdiction: UK (HGCRA) and US (lien law) modes
-- Saved report access via unique link (no login required)
+The analysis route can be long-running. Keep the timeout in [vercel.json](/c:/Users/DavidLynch/mason-mvp/vercel.json) aligned with that.
