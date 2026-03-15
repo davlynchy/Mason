@@ -4,9 +4,6 @@ import { createServerClient } from '@/lib/supabase';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
-// Must disable body parsing for Stripe webhook signature verification
-export const config = { api: { bodyParser: false } };
-
 export async function POST(req: NextRequest) {
   const sig = req.headers.get('stripe-signature');
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;

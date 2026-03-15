@@ -1,37 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase';
+import { getSerializedReport } from '@/lib/report-state';
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const { id } = params;
-    const supabase = createServerClient();
+    const report = await getSerializedReport(params.id);
 
-    const { data, error } = await supabase
-      .from('reports')
-      .select('id, status, paid, contract_type, jurisdiction, analysis_stage, preview_data, full_data, error_message')
-      .eq('id', id)
-      .single();
-
-    if (error || !data) {
+    if (!report) {
       return NextResponse.json({ error: 'Report not found' }, { status: 404 });
     }
 
-    // Only return full_data if paid
-    return NextResponse.json({
-      id:           data.id,
-      status:       data.status,
-      paid:         data.paid,
-      contractType: data.contract_type,
-      jurisdiction: data.jurisdiction,
-      analysisStage:data.analysis_stage,
-      previewData:  data.preview_data,
-      fullData:     data.paid ? data.full_data : null,
-      errorMessage: data.error_message,
-    });
-
+    return NextResponse.json(report);
   } catch (err) {
     console.error('Report GET error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

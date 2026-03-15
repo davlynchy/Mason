@@ -38,6 +38,12 @@ create table if not exists reports (
   paid              boolean not null default false,
   stripe_session_id text,
   error_message     text,
+  processing_phase  text
+                    check (processing_phase in ('queued','extracting','summarising','counting','top_risk','complete','error')),
+  processing_message text,
+  processing_error  text,
+  processing_started_at timestamptz,
+  processing_updated_at timestamptz,
   created_at        timestamptz default now(),
   completed_at      timestamptz
 );

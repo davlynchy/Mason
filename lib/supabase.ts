@@ -57,6 +57,11 @@ export interface Report {
   paid: boolean;
   stripe_session_id: string | null;
   error_message: string | null;
+  processing_phase: 'queued' | 'extracting' | 'summarising' | 'counting' | 'top_risk' | 'complete' | 'error' | null;
+  processing_message: string | null;
+  processing_error: string | null;
+  processing_started_at: string | null;
+  processing_updated_at: string | null;
   created_at: string;
   completed_at: string | null;
 }

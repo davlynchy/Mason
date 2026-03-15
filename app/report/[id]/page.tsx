@@ -1,11 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 
 type ContractType = 'subcontract' | 'head_contract';
 type Jurisdiction = 'AU' | 'UK' | 'USA';
 type AnalysisStage = 'preview' | 'full';
+type ProcessingPhase =
+  | 'queued'
+  | 'extracting'
+  | 'summarising'
+  | 'counting'
+  | 'top_risk'
+  | 'complete'
+  | 'error';
 
 interface Risk {
   id: string;
@@ -44,18 +52,18 @@ interface ReportData {
     contract_details?: ContractDetails;
     risk_count?: { high: number; medium: number; low: number };
     preview_risk?: Risk | null;
-    progress?: {
-      phase: 'summary' | 'risk' | 'complete';
-      message: string;
-      completedSteps: string[];
-    };
   } | null;
   fullData: {
     risks: Risk[];
     financial_summary: FinancialSummary;
     immediate_actions: string[];
   } | null;
-  errorMessage?: string;
+  errorMessage?: string | null;
+  processingPhase?: ProcessingPhase | null;
+  processingMessage?: string | null;
+  processingError?: string | null;
+  processingStartedAt?: string | null;
+  processingUpdatedAt?: string | null;
 }
 
 const LEVEL_STYLES = {
@@ -63,6 +71,14 @@ const LEVEL_STYLES = {
   MEDIUM: 'border-amber-200 bg-amber-50 text-amber-700',
   LOW: 'border-green-200 bg-green-50 text-green-700',
 };
+
+const PREVIEW_STEPS: Array<{ phase: ProcessingPhase; label: string }> = [
+  { phase: 'queued', label: 'Queued' },
+  { phase: 'extracting', label: 'Extracting text' },
+  { phase: 'summarising', label: 'Writing summary' },
+  { phase: 'counting', label: 'Mapping counts' },
+  { phase: 'top_risk', label: 'Explaining top risk' },
+];
 
 function jurisdictionLabel(jurisdiction: Jurisdiction) {
   switch (jurisdiction) {
@@ -75,11 +91,16 @@ function jurisdictionLabel(jurisdiction: Jurisdiction) {
   }
 }
 
-function processingCopy(jurisdiction: Jurisdiction, paid: boolean) {
-  if (paid) {
-    return `Generating your full report against ${jurisdictionLabel(jurisdiction)}.`;
+function processingCopy(report: ReportData) {
+  if (report.processingMessage) {
+    return report.processingMessage;
   }
-  return `Generating your fast preview against ${jurisdictionLabel(jurisdiction)}.`;
+
+  if (report.paid) {
+    return `Generating your full report against ${jurisdictionLabel(report.jurisdiction)}.`;
+  }
+
+  return `Generating your fast preview against ${jurisdictionLabel(report.jurisdiction)}.`;
 }
 
 function BrandLogo() {
@@ -115,16 +136,21 @@ function RiskCard({ risk }: { risk: Risk }) {
   );
 }
 
+function SkeletonBlock({ className }: { className: string }) {
+  return <div className={`animate-pulse rounded-2xl bg-mason-gray-50 ${className}`} />;
+}
+
 export default function ReportPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const [report, setReport] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
+  const [startingPreview, setStartingPreview] = useState(false);
   const [fullAnalysisStarting, setFullAnalysisStarting] = useState(false);
-  const [previewAnalysisStarting, setPreviewAnalysisStarting] = useState(false);
-  const fullAnalysisRequested = useRef(false);
+  const [streamFallback, setStreamFallback] = useState(false);
   const previewAnalysisRequested = useRef(false);
+  const fullAnalysisRequested = useRef(false);
 
   const fetchReport = useCallback(async () => {
     try {
@@ -133,6 +159,7 @@ export default function ReportPage() {
         setLoading(false);
         return null;
       }
+
       const data: ReportData = await res.json();
       setReport(data);
       setLoading(false);
@@ -143,42 +170,99 @@ export default function ReportPage() {
     }
   }, [id]);
 
+  const startAnalysis = useCallback(async (stage: AnalysisStage) => {
+    const res = await fetch('/api/analyse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reportId: id, stage }),
+    });
+
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to start analysis');
+    }
+
+    if (data?.report) {
+      setReport(data.report as ReportData);
+    } else {
+      await fetchReport();
+    }
+  }, [fetchReport, id]);
+
   useEffect(() => {
-    fetchReport();
+    void fetchReport();
   }, [fetchReport]);
 
   useEffect(() => {
-    const interval = setInterval(async () => {
-      const data = await fetchReport();
-      if (data && data.status !== 'processing' && data.status !== 'uploading') {
-        clearInterval(interval);
+    if (!id || typeof EventSource === 'undefined') {
+      setStreamFallback(true);
+      return;
+    }
+
+    const source = new EventSource(`/api/reports/${id}/events`);
+
+    source.addEventListener('report', event => {
+      const nextReport = JSON.parse((event as MessageEvent).data) as ReportData;
+      setReport(nextReport);
+      setLoading(false);
+
+      if (nextReport.status === 'complete' || nextReport.status === 'error') {
+        source.close();
       }
-    }, 3000);
+    });
+
+    source.addEventListener('error', () => {
+      setStreamFallback(true);
+      source.close();
+    });
+
+    return () => {
+      source.close();
+    };
+  }, [id]);
+
+  useEffect(() => {
+    if (!streamFallback || !report || (report.status !== 'processing' && report.status !== 'uploading')) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      void fetchReport();
+    }, 2000);
 
     return () => clearInterval(interval);
-  }, [fetchReport]);
+  }, [fetchReport, report, streamFallback]);
 
   useEffect(() => {
-    if (!report || report.previewData || report.status === 'processing' || previewAnalysisRequested.current) {
+    if (!report) {
+      return;
+    }
+
+    if (report.status === 'error') {
+      return;
+    }
+
+    const hasPreviewStarted = !!report.previewData || report.status === 'processing';
+    if (hasPreviewStarted || previewAnalysisRequested.current || report.analysisStage === 'full') {
       return;
     }
 
     previewAnalysisRequested.current = true;
-    setPreviewAnalysisStarting(true);
+    setStartingPreview(true);
 
-    void fetch('/api/analyse', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reportId: id, stage: 'preview' }),
-    })
+    void startAnalysis('preview')
       .catch(error => {
-        console.error('Failed to start preview analysis', error);
+        setReport(prev => prev ? {
+          ...prev,
+          status: 'error',
+          processingError: error instanceof Error ? error.message : 'Failed to start preview',
+          errorMessage: error instanceof Error ? error.message : 'Failed to start preview',
+        } : prev);
       })
       .finally(() => {
-        setPreviewAnalysisStarting(false);
-        void fetchReport();
+        setStartingPreview(false);
       });
-  }, [fetchReport, id, report]);
+  }, [report, startAnalysis]);
 
   useEffect(() => {
     if (!report?.paid || report.fullData || report.status === 'processing' || fullAnalysisRequested.current) {
@@ -188,19 +272,14 @@ export default function ReportPage() {
     fullAnalysisRequested.current = true;
     setFullAnalysisStarting(true);
 
-    void fetch('/api/analyse', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reportId: id, stage: 'full' }),
-    })
+    void startAnalysis('full')
       .catch(error => {
         console.error('Failed to start full analysis', error);
       })
       .finally(() => {
         setFullAnalysisStarting(false);
-        void fetchReport();
       });
-  }, [fetchReport, id, report]);
+  }, [report, startAnalysis]);
 
   async function handleUpgrade() {
     setPaying(true);
@@ -218,6 +297,29 @@ export default function ReportPage() {
       setPaying(false);
     }
   }
+
+  async function handleRetryPreview() {
+    previewAnalysisRequested.current = false;
+    setStartingPreview(true);
+
+    try {
+      await startAnalysis('preview');
+    } finally {
+      setStartingPreview(false);
+    }
+  }
+
+  const preview = report?.previewData;
+  const full = report?.fullData;
+  const totalRisks = useMemo(() => (
+    (preview?.risk_count?.high ?? 0) +
+    (preview?.risk_count?.medium ?? 0) +
+    (preview?.risk_count?.low ?? 0)
+  ), [preview]);
+
+  const currentStepIndex = PREVIEW_STEPS.findIndex(step => step.phase === report?.processingPhase);
+  const slowContract = !!report?.processingStartedAt &&
+    (Date.now() - new Date(report.processingStartedAt).getTime()) > 90_000;
 
   if (loading) {
     return (
@@ -241,56 +343,8 @@ export default function ReportPage() {
     );
   }
 
-  if (report.status === 'error') {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-white px-6">
-        <div className="max-w-md rounded-3xl border border-red-200 bg-red-50 p-8 text-center">
-          <p className="text-lg font-semibold text-mason-black">Analysis failed</p>
-          <p className="mt-3 text-sm leading-relaxed text-mason-gray-600">
-            {report.errorMessage || 'Something went wrong while analysing your documents.'}
-          </p>
-          <a href="/" className="mt-5 inline-flex rounded-xl bg-mason-black px-5 py-3 text-sm font-semibold text-white">
-            Start again
-          </a>
-        </div>
-      </div>
-    );
-  }
-
-  const hasPreviewContent = !!(
-    report.previewData?.executive_summary ||
-    report.previewData?.contract_details ||
-    report.previewData?.risk_count ||
-    report.previewData?.preview_risk
-  );
-  const isInitialProcessing = !hasPreviewContent && (report.status === 'processing' || report.status === 'uploading' || previewAnalysisStarting);
-  const isFullProcessing = !!report.previewData && report.paid && !report.fullData && (report.status === 'processing' || fullAnalysisStarting);
-
-  if (isInitialProcessing) {
-    return (
-      <div className="flex min-h-screen flex-col bg-white">
-        <header className="border-b border-mason-gray-100 px-6 py-5">
-          <BrandLogo />
-        </header>
-        <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
-          <div className="h-12 w-12 animate-spin rounded-full border-2 border-mason-black border-t-transparent" />
-          <div className="max-w-md">
-            <p className="text-xl font-semibold text-mason-black">Preparing your preview</p>
-            <p className="mt-3 text-sm leading-relaxed text-mason-gray-500">
-              {processingCopy(report.jurisdiction, false)}
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const preview = report.previewData;
-  const full = report.fullData;
-  const totalRisks =
-    (preview?.risk_count?.high ?? 0) +
-    (preview?.risk_count?.medium ?? 0) +
-    (preview?.risk_count?.low ?? 0);
+  const showRetry = report.analysisStage === 'preview' && (report.status === 'error' || report.processingPhase === 'error');
+  const showLivePreview = report.analysisStage === 'preview' || !full;
 
   return (
     <div className="min-h-screen bg-white">
@@ -321,58 +375,89 @@ export default function ReportPage() {
           </div>
         ) : null}
 
-        {preview ? (
+        {showLivePreview ? (
           <>
-            {report.status === 'processing' ? (
-              <div className="mb-6 rounded-2xl border border-mason-gray-100 bg-mason-gray-50 px-4 py-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-mason-gray-400">
-                  Live Preview
-                </p>
-                <p className="mt-2 text-sm text-mason-black">
-                  {preview.progress?.message || processingCopy(report.jurisdiction, false)}
-                </p>
-                <div className="mt-4 grid gap-2 sm:grid-cols-4">
-                  {['Files uploaded', 'Summary generated', 'Risk counts mapped', 'Top risk explained'].map(step => {
-                    const complete = preview.progress?.completedSteps?.includes(step) ?? false;
-                    return (
-                      <div
-                        key={step}
-                        className={`rounded-xl px-3 py-3 text-xs font-medium ${
-                          complete ? 'bg-white text-mason-black' : 'bg-white/60 text-mason-gray-400'
-                        }`}
-                      >
-                        {complete ? 'Done: ' : 'Waiting: '}
-                        {step}
-                      </div>
-                    );
-                  })}
+            <div className="mb-6 rounded-2xl border border-mason-gray-100 bg-mason-gray-50 px-4 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.28em] text-mason-gray-400">
+                    Live Preview
+                  </p>
+                  <p className="mt-2 text-sm text-mason-black">
+                    {slowContract
+                      ? 'Still working through a large or scanned contract. Mason will reveal sections as they are ready.'
+                      : processingCopy(report)}
+                  </p>
                 </div>
+
+                {showRetry ? (
+                  <button
+                    type="button"
+                    onClick={handleRetryPreview}
+                    disabled={startingPreview}
+                    className="rounded-xl border border-mason-black px-4 py-2 text-sm font-semibold text-mason-black disabled:opacity-60"
+                  >
+                    {startingPreview ? 'Retrying...' : 'Retry Preview'}
+                  </button>
+                ) : null}
               </div>
-            ) : null}
+
+              <div className="mt-4 grid gap-2 sm:grid-cols-5">
+                {PREVIEW_STEPS.map((step, index) => {
+                  const complete = currentStepIndex >= 0 && index < currentStepIndex;
+                  const active = report.processingPhase === step.phase;
+
+                  return (
+                    <div
+                      key={step.phase}
+                      className={`rounded-xl px-3 py-3 text-xs font-medium ${
+                        active
+                          ? 'bg-white text-mason-black ring-1 ring-mason-black'
+                          : complete
+                            ? 'bg-white text-mason-black'
+                            : 'bg-white/60 text-mason-gray-400'
+                      }`}
+                    >
+                      {step.label}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {report.processingError ? (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {report.processingError}
+                </div>
+              ) : null}
+            </div>
 
             <div className="mb-8">
               <p className="text-xs font-semibold uppercase tracking-[0.32em] text-mason-gray-400">
                 Contract Risk Review
               </p>
               <h1 className="mt-4 font-kanit text-4xl font-black text-mason-black">
-                {preview.contract_details?.contract_type || 'Contract preview'}
+                {preview?.contract_details?.contract_type || 'Contract preview'}
               </h1>
-              {preview.executive_summary ? (
+              {preview?.executive_summary ? (
                 <p className="mt-4 max-w-3xl text-base leading-relaxed text-mason-gray-600">
                   {preview.executive_summary}
                 </p>
               ) : (
-                <div className="mt-4 h-16 max-w-3xl animate-pulse rounded-2xl bg-mason-gray-50" />
+                <div className="mt-4 space-y-3">
+                  <SkeletonBlock className="h-4 w-full" />
+                  <SkeletonBlock className="h-4 w-11/12" />
+                  <SkeletonBlock className="h-4 w-3/4" />
+                </div>
               )}
             </div>
 
             <div className="mb-8 grid gap-4 md:grid-cols-2">
               {[
-                { label: 'Parties', value: preview.contract_details?.parties ?? 'Reading document...' },
-                { label: 'Contract value', value: preview.contract_details?.contract_value ?? 'Reading document...' },
+                { label: 'Parties', value: preview?.contract_details?.parties ?? 'Reading document...' },
+                { label: 'Contract value', value: preview?.contract_details?.contract_value ?? 'Reading document...' },
                 { label: 'Contract type', value: report.contractType === 'subcontract' ? 'Subcontract' : 'Head contract' },
                 { label: 'Jurisdiction', value: jurisdictionLabel(report.jurisdiction) },
-                { label: 'Key dates', value: preview.contract_details?.key_dates ?? 'Reading document...' },
+                { label: 'Key dates', value: preview?.contract_details?.key_dates ?? 'Reading document...' },
               ].map(item => (
                 <div key={item.label} className="rounded-2xl bg-mason-gray-50 px-4 py-4">
                   <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">{item.label}</p>
@@ -387,9 +472,9 @@ export default function ReportPage() {
               </p>
               <div className="mt-4 grid grid-cols-3 gap-4">
                 {[
-                  { label: 'HIGH', count: preview.risk_count?.high ?? 0, tone: 'text-red-600' },
-                  { label: 'MEDIUM', count: preview.risk_count?.medium ?? 0, tone: 'text-amber-600' },
-                  { label: 'LOW', count: preview.risk_count?.low ?? 0, tone: 'text-green-600' },
+                  { label: 'HIGH', count: preview?.risk_count?.high ?? 0, tone: 'text-red-600' },
+                  { label: 'MEDIUM', count: preview?.risk_count?.medium ?? 0, tone: 'text-amber-600' },
+                  { label: 'LOW', count: preview?.risk_count?.low ?? 0, tone: 'text-green-600' },
                 ].map(item => (
                   <div key={item.label} className="rounded-xl bg-mason-gray-50 px-4 py-4 text-center">
                     <p className={`font-kanit text-3xl font-black ${item.tone}`}>{item.count}</p>
@@ -399,7 +484,7 @@ export default function ReportPage() {
               </div>
             </div>
 
-                  {preview.preview_risk ? (
+            {preview?.preview_risk ? (
               <div className="mb-10">
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="font-kanit text-2xl font-black text-mason-black">Fast Preview</h2>
@@ -411,94 +496,103 @@ export default function ReportPage() {
                 </div>
                 <RiskCard risk={preview.preview_risk} />
               </div>
-            ) : report.status === 'processing' ? (
+            ) : (
               <div className="mb-10 rounded-3xl border border-mason-gray-100 bg-mason-gray-50 p-8">
                 <div className="mb-4 h-3 w-40 animate-pulse rounded-full bg-mason-gray-200" />
                 <div className="mb-3 h-6 w-2/3 animate-pulse rounded-full bg-mason-gray-200" />
                 <div className="mb-3 h-4 w-full animate-pulse rounded-full bg-mason-gray-200" />
                 <div className="h-4 w-5/6 animate-pulse rounded-full bg-mason-gray-200" />
               </div>
-            ) : null}
-
-            {isFullProcessing ? (
-              <div className="mb-10 rounded-3xl border border-mason-gray-100 bg-mason-gray-50 p-8 text-center">
-                <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-2 border-mason-black border-t-transparent" />
-                <p className="text-lg font-semibold text-mason-black">Building your full report</p>
-                <p className="mt-2 text-sm text-mason-gray-500">
-                  {processingCopy(report.jurisdiction, true)}
-                </p>
-              </div>
-            ) : null}
-
-            {!report.paid ? (
-              <div className="mb-10 rounded-3xl border-2 border-mason-black p-8 text-center">
-                <p className="font-kanit text-2xl font-black text-mason-black">Unlock the full report</p>
-                <p className="mt-3 text-sm leading-relaxed text-mason-gray-500">
-                  The fast preview is ready. Unlock the complete risk register, financial summary, and action plan on demand.
-                </p>
-                <button
-                  type="button"
-                  onClick={handleUpgrade}
-                  disabled={paying}
-                  className="mt-5 rounded-xl bg-mason-black px-6 py-3 text-sm font-semibold text-white disabled:opacity-60"
-                >
-                  {paying ? 'Redirecting...' : 'Unlock Full Report - $799'}
-                </button>
-              </div>
-            ) : null}
-
-            {report.paid && full ? (
-              <>
-                <div className="mb-8">
-                  <h2 className="mb-4 font-kanit text-2xl font-black text-mason-black">Full Risk Register</h2>
-                  <div className="space-y-4">
-                    {full.risks.map(risk => (
-                      <RiskCard key={risk.id} risk={risk} />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mb-8 rounded-2xl border border-mason-gray-100 p-5">
-                  <h2 className="mb-4 font-kanit text-2xl font-black text-mason-black">Financial Summary</h2>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {[
-                      { label: 'Contract sum', value: full.financial_summary.contract_sum ?? 'Not specified' },
-                      { label: 'Payment terms', value: full.financial_summary.payment_terms },
-                      { label: 'Liquidated damages', value: full.financial_summary.liquidated_damages ?? 'Not specified' },
-                      { label: 'Retention', value: full.financial_summary.retention ?? 'Not specified' },
-                    ].map(item => (
-                      <div key={item.label}>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">{item.label}</p>
-                        <p className="mt-1 text-sm text-mason-black">{item.value}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="mt-5">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">Key financial risks</p>
-                    <ul className="mt-2 space-y-2">
-                        {full.financial_summary.key_financial_risks.map((item, index) => (
-                          <li key={`${item}-${index}`} className="text-sm text-mason-gray-700">
-                            - {item}
-                          </li>
-                        ))}
-                    </ul>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-mason-gray-100 p-5">
-                  <h2 className="mb-4 font-kanit text-2xl font-black text-mason-black">Immediate Actions</h2>
-                  <ol className="space-y-3">
-                    {full.immediate_actions.map((item, index) => (
-                      <li key={`${item}-${index}`} className="flex gap-3 text-sm text-mason-gray-700">
-                        <span className="font-kanit text-lg font-black text-mason-gray-300">{String(index + 1).padStart(2, '0')}</span>
-                        <span>{item}</span>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              </>
-            ) : null}
+            )}
           </>
+        ) : null}
+
+        {report.status === 'error' && !showRetry ? (
+          <div className="mb-10 rounded-3xl border border-red-200 bg-red-50 p-8 text-center">
+            <p className="text-lg font-semibold text-mason-black">Analysis failed</p>
+            <p className="mt-3 text-sm leading-relaxed text-mason-gray-600">
+              {report.processingError || report.errorMessage || 'Something went wrong while analysing your documents.'}
+            </p>
+          </div>
+        ) : null}
+
+        {!report.paid ? (
+          <div className="mb-10 rounded-3xl border-2 border-mason-black p-8 text-center">
+            <p className="font-kanit text-2xl font-black text-mason-black">Unlock the full report</p>
+            <p className="mt-3 text-sm leading-relaxed text-mason-gray-500">
+              The fast preview is ready. Unlock the complete risk register, financial summary, and action plan on demand.
+            </p>
+            <button
+              type="button"
+              onClick={handleUpgrade}
+              disabled={paying}
+              className="mt-5 rounded-xl bg-mason-black px-6 py-3 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              {paying ? 'Redirecting...' : 'Unlock Full Report - $799'}
+            </button>
+          </div>
+        ) : null}
+
+        {report.paid && full ? (
+          <>
+            <div className="mb-8">
+              <h2 className="mb-4 font-kanit text-2xl font-black text-mason-black">Full Risk Register</h2>
+              <div className="space-y-4">
+                {full.risks.map(risk => (
+                  <RiskCard key={risk.id} risk={risk} />
+                ))}
+              </div>
+            </div>
+
+            <div className="mb-8 rounded-2xl border border-mason-gray-100 p-5">
+              <h2 className="mb-4 font-kanit text-2xl font-black text-mason-black">Financial Summary</h2>
+              <div className="grid gap-4 md:grid-cols-2">
+                {[
+                  { label: 'Contract sum', value: full.financial_summary.contract_sum ?? 'Not specified' },
+                  { label: 'Payment terms', value: full.financial_summary.payment_terms },
+                  { label: 'Liquidated damages', value: full.financial_summary.liquidated_damages ?? 'Not specified' },
+                  { label: 'Retention', value: full.financial_summary.retention ?? 'Not specified' },
+                ].map(item => (
+                  <div key={item.label}>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">{item.label}</p>
+                    <p className="mt-1 text-sm text-mason-black">{item.value}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-5">
+                <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">Key financial risks</p>
+                <ul className="mt-2 space-y-2">
+                  {full.financial_summary.key_financial_risks.map((item, index) => (
+                    <li key={`${item}-${index}`} className="text-sm text-mason-gray-700">
+                      - {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-mason-gray-100 p-5">
+              <h2 className="mb-4 font-kanit text-2xl font-black text-mason-black">Immediate Actions</h2>
+              <ol className="space-y-3">
+                {full.immediate_actions.map((item, index) => (
+                  <li key={`${item}-${index}`} className="flex gap-3 text-sm text-mason-gray-700">
+                    <span className="font-kanit text-lg font-black text-mason-gray-300">{String(index + 1).padStart(2, '0')}</span>
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </>
+        ) : null}
+
+        {report.paid && !full ? (
+          <div className="rounded-3xl border border-mason-gray-100 bg-mason-gray-50 p-8 text-center">
+            <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-2 border-mason-black border-t-transparent" />
+            <p className="text-lg font-semibold text-mason-black">Building your full report</p>
+            <p className="mt-2 text-sm text-mason-gray-500">
+              {report.processingMessage || `Generating your full report against ${jurisdictionLabel(report.jurisdiction)}.`}
+            </p>
+          </div>
         ) : null}
       </div>
     </div>
