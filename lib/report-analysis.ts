@@ -12,6 +12,7 @@ import {
   type Jurisdiction,
 } from '@/lib/ai';
 import { buildContractSections } from '@/lib/contract-structure';
+import { generateRuleBasedFindings, mergeFindings, mergeRiskCounts } from '@/lib/contract-rules';
 import { createServerClient } from '@/lib/supabase';
 import type { ProcessingPhase } from '@/lib/report-state';
 
@@ -123,6 +124,7 @@ async function runPreviewAnalysis(
     await persistExtractionEvidence(supabase, reportId, extractionEvidence);
     const sections = buildContractSections(extractionEvidence);
     await replaceContractSections(supabase, reportId, extractionEvidence, sections);
+    const ruleFindings = generateRuleBasedFindings(sections, jurisdiction);
 
     if (!previewData.executive_summary || !previewData.contract_details || !previewData.risk_count) {
       await updateProcessingState(supabase, reportId, {
@@ -157,9 +159,13 @@ async function runPreviewAnalysis(
       });
 
       Object.assign(previewData, snapshot);
+      previewData.risk_count = mergeRiskCounts(
+        snapshot.risk_count,
+        mergeFindings(ruleFindings, [])
+      );
     }
 
-    if (!previewData.preview_risk) {
+    if (!previewData.preview_risk || ruleFindings.length) {
       await updateProcessingState(supabase, reportId, {
         phase: 'top_risk',
         message: 'Drafting the first key warning and negotiation recommendation.',
@@ -176,10 +182,19 @@ async function runPreviewAnalysis(
         'top_risk'
       );
 
-      previewData.preview_risk = previewRisk;
-    }
+      const mergedPreviewFindings = mergeFindings(ruleFindings, previewRisk ? [previewRisk] : []);
+      previewData.preview_risk = mergedPreviewFindings[0] ?? null;
+      if (previewData.risk_count) {
+        previewData.risk_count = mergeRiskCounts(
+          previewData.risk_count as { high: number; medium: number; low: number },
+          mergedPreviewFindings
+        );
+      }
 
-    await replaceFindings(supabase, reportId, 'preview', previewData.preview_risk ? [previewData.preview_risk as RiskItem] : []);
+      await replaceFindings(supabase, reportId, 'preview', mergedPreviewFindings);
+    } else {
+      await replaceFindings(supabase, reportId, 'preview', previewData.preview_risk ? [previewData.preview_risk as RiskItem] : []);
+    }
 
     const { error } = await supabase
       .from('reports')
@@ -226,6 +241,7 @@ async function runFullAnalysis(
     await persistExtractionEvidence(supabase, reportId, extractionEvidence);
     const sections = buildContractSections(extractionEvidence);
     await replaceContractSections(supabase, reportId, extractionEvidence, sections);
+    const ruleFindings = generateRuleBasedFindings(sections, jurisdiction);
 
     const { error: processingError } = await supabase
       .from('reports')
@@ -253,7 +269,10 @@ async function runFullAnalysis(
       'top_risk'
     );
 
-    await replaceFindings(supabase, reportId, 'full', fullData.risks);
+    const mergedFullRisks = mergeFindings(ruleFindings, fullData.risks);
+    fullData.risks = mergedFullRisks;
+
+    await replaceFindings(supabase, reportId, 'full', mergedFullRisks);
 
     const { error } = await supabase
       .from('reports')
