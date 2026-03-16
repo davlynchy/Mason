@@ -25,6 +25,8 @@ interface Risk {
   recommendation: string;
   source_pages?: number[] | null;
   source_excerpt?: string | null;
+  finding_origin?: 'rule' | 'ai' | null;
+  rule_basis?: string | null;
 }
 
 interface ContractDetails {
@@ -118,7 +120,7 @@ function RiskBadge({ level }: { level: Risk['level'] }) {
 }
 
 function findingOrigin(risk: Risk) {
-  if (/^[A-Z]{2}\d+/.test(risk.id)) {
+  if (risk.finding_origin === 'rule' || /^[A-Z]{2,3}\d+/.test(risk.id)) {
     return 'Rule-based';
   }
 
@@ -144,6 +146,12 @@ function RiskCard({ risk }: { risk: Risk }) {
           <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">Recommended action</p>
           <p className="mt-1 text-sm text-mason-black">{risk.recommendation}</p>
         </div>
+        {risk.finding_origin === 'rule' && risk.rule_basis ? (
+          <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-blue-500">Rule basis</p>
+            <p className="mt-1 text-sm text-blue-900">{risk.rule_basis}</p>
+          </div>
+        ) : null}
         {risk.source_excerpt || risk.source_pages?.length ? (
           <div className="rounded-xl border border-mason-gray-100 px-4 py-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">Source</p>

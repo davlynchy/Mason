@@ -40,6 +40,8 @@ export interface RiskItem {
   recommendation: string;
   source_pages?: number[] | null;
   source_excerpt?: string | null;
+  finding_origin?: 'rule' | 'ai' | null;
+  rule_basis?: string | null;
 }
 
 export interface ExtractionEvidence {

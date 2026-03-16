@@ -182,7 +182,10 @@ async function runPreviewAnalysis(
         'top_risk'
       );
 
-      const mergedPreviewFindings = mergeFindings(ruleFindings, previewRisk ? [previewRisk] : []);
+      const mergedPreviewFindings = mergeFindings(
+        ruleFindings,
+        previewRisk ? annotateAiFindings([previewRisk]) : []
+      );
       previewData.preview_risk = mergedPreviewFindings[0] ?? null;
       if (previewData.risk_count) {
         previewData.risk_count = mergeRiskCounts(
@@ -193,7 +196,12 @@ async function runPreviewAnalysis(
 
       await replaceFindings(supabase, reportId, 'preview', mergedPreviewFindings);
     } else {
-      await replaceFindings(supabase, reportId, 'preview', previewData.preview_risk ? [previewData.preview_risk as RiskItem] : []);
+      await replaceFindings(
+        supabase,
+        reportId,
+        'preview',
+        previewData.preview_risk ? annotateStoredFindings([previewData.preview_risk as RiskItem]) : []
+      );
     }
 
     const { error } = await supabase
@@ -269,7 +277,7 @@ async function runFullAnalysis(
       'top_risk'
     );
 
-    const mergedFullRisks = mergeFindings(ruleFindings, fullData.risks);
+    const mergedFullRisks = mergeFindings(ruleFindings, annotateAiFindings(fullData.risks));
     fullData.risks = mergedFullRisks;
 
     await replaceFindings(supabase, reportId, 'full', mergedFullRisks);
@@ -511,6 +519,8 @@ async function replaceFindings(
     recommendation: risk.recommendation,
     source_pages: risk.source_pages ?? null,
     source_excerpt: risk.source_excerpt ?? null,
+    finding_origin: risk.finding_origin ?? inferFindingOrigin(risk),
+    rule_basis: risk.rule_basis ?? null,
     sort_order: index,
   }));
 
@@ -521,6 +531,26 @@ async function replaceFindings(
   if (insertError) {
     console.error(`Failed to store ${stage} findings:`, insertError);
   }
+}
+
+function annotateAiFindings(risks: RiskItem[]): RiskItem[] {
+  return risks.map(risk => ({
+    ...risk,
+    finding_origin: risk.finding_origin ?? 'ai',
+    rule_basis: risk.rule_basis ?? null,
+  }));
+}
+
+function annotateStoredFindings(risks: RiskItem[]): RiskItem[] {
+  return risks.map(risk => ({
+    ...risk,
+    finding_origin: risk.finding_origin ?? inferFindingOrigin(risk),
+    rule_basis: risk.rule_basis ?? null,
+  }));
+}
+
+function inferFindingOrigin(risk: RiskItem): 'rule' | 'ai' {
+  return /^[A-Z]{2,3}\d+/.test(risk.id) ? 'rule' : 'ai';
 }
 
 async function replaceContractSections(

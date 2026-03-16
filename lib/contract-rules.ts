@@ -57,6 +57,8 @@ export function generateRuleBasedFindings(
         recommendation: rule.recommendation,
         source_pages: section.pageStart ? buildPageRange(section.pageStart, section.pageEnd) : null,
         source_excerpt: section.content.slice(0, 280),
+        finding_origin: 'rule',
+        rule_basis: describeRuleBasis(rule),
       });
     }
   }
@@ -338,6 +340,24 @@ function makeRule(
   options: Omit<RuleDefinition, 'title' | 'level' | 'impact' | 'detail' | 'recommendation' | 'match'>
 ): RuleDefinition {
   return { title, level, impact, detail, recommendation, match, ...options };
+}
+
+function describeRuleBasis(rule: RuleDefinition) {
+  const parts: string[] = [];
+
+  if (rule.sectionTypes?.length) {
+    parts.push(`Section types: ${rule.sectionTypes.join(', ')}`);
+  }
+
+  if (rule.headingKeywords?.length) {
+    parts.push(`Heading cues: ${rule.headingKeywords.join(', ')}`);
+  }
+
+  if (rule.contextKeywords?.length) {
+    parts.push(`Context: ${rule.contextKeywords.join(', ')}`);
+  }
+
+  return parts.join(' | ') || 'Deterministic clause rule';
 }
 
 function matchesRule(section: ContractSection, context: RuleContext, rule: RuleDefinition) {

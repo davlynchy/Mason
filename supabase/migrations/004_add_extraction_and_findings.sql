@@ -33,6 +33,8 @@ create table if not exists analysis_findings (
   recommendation text not null,
   source_pages integer[],
   source_excerpt text,
+  finding_origin text check (finding_origin in ('rule','ai')),
+  rule_basis text,
   sort_order integer not null default 0,
   created_at timestamptz default now()
 );
