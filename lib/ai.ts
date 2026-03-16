@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import mammoth from 'mammoth';
 import { downloadFromR2 } from './r2';
+import type { ContractSection } from './contract-structure';
 
 export type Jurisdiction = 'AU' | 'UK' | 'USA';
 export type AnalysisStage = 'preview' | 'full';
@@ -10,6 +11,9 @@ const MIN_EMBEDDED_PDF_TEXT = 1200;
 const PREVIEW_MAX_TEXT_CHARS_PER_FILE = 18000;
 const FULL_MAX_TEXT_CHARS_PER_FILE = 50000;
 const PREVIEW_MAX_TOTAL_TEXT_CHARS = 28000;
+const PREVIEW_MAX_SECTION_CHARS = 36000;
+const RISK_MAX_SECTION_CHARS = 48000;
+const FULL_MAX_SECTION_CHARS = 120000;
 
 interface ExtractedFile {
   fileData?: string;
@@ -49,6 +53,9 @@ export interface ExtractionEvidence {
 }
 
 type ExtractionStatus = ExtractionEvidence['extractionStatus'];
+type AnalysisInput =
+  | { kind: 'files'; r2Keys: string[]; filenames: string[] }
+  | { kind: 'sections'; sections: ContractSection[] };
 
 export interface PreviewAnalysisResult {
   executive_summary: string;
@@ -408,8 +415,7 @@ async function getPDFParseCtor(): Promise<PDFParseCtor> {
 }
 
 async function buildMessages(
-  r2Keys: string[],
-  filenames: string[],
+  input: AnalysisInput,
   systemPrompt: string,
   userPrompt: string,
   mode: ExtractionMode
@@ -417,13 +423,18 @@ async function buildMessages(
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: 'system', content: systemPrompt },
   ];
+
+  if (input.kind === 'sections') {
+    return buildSectionMessages(input.sections, messages, userPrompt, mode);
+  }
+
   let totalTextChars = 0;
   const maxPerFileChars =
     mode === 'preview' ? PREVIEW_MAX_TEXT_CHARS_PER_FILE : FULL_MAX_TEXT_CHARS_PER_FILE;
 
-  for (let i = 0; i < r2Keys.length; i++) {
-    const key = r2Keys[i];
-    const filename = filenames[i] ?? `file_${i + 1}`;
+  for (let i = 0; i < input.r2Keys.length; i++) {
+    const key = input.r2Keys[i];
+    const filename = input.filenames[i] ?? `file_${i + 1}`;
 
     messages.push({
       role: 'user',
@@ -500,15 +511,14 @@ async function buildMessages(
 }
 
 async function runModel<T>(
-  r2Keys: string[],
-  filenames: string[],
+  input: AnalysisInput,
   systemPrompt: string,
   userPrompt: string,
   maxTokens: number,
   mode: ExtractionMode,
   model: string
 ): Promise<T> {
-  const messages = await buildMessages(r2Keys, filenames, systemPrompt, userPrompt, mode);
+  const messages = await buildMessages(input, systemPrompt, userPrompt, mode);
 
   const response = await client.chat.completions.create({
     model,
@@ -542,8 +552,7 @@ export async function analysePreviewSnapshot(
   jurisdiction: Jurisdiction
 ): Promise<PreviewSnapshotResult> {
   return runModel<PreviewSnapshotResult>(
-    r2Keys,
-    filenames,
+    { kind: 'files', r2Keys, filenames },
     buildSystemPrompt(jurisdiction),
     buildPreviewSnapshotPrompt(contractType, jurisdiction),
     1100,
@@ -559,8 +568,7 @@ export async function analysePreviewRisk(
   jurisdiction: Jurisdiction
 ): Promise<RiskItem | null> {
   const result = await runModel<{ preview_risk: RiskItem | null }>(
-    r2Keys,
-    filenames,
+    { kind: 'files', r2Keys, filenames },
     buildSystemPrompt(jurisdiction),
     buildPreviewRiskPrompt(contractType, jurisdiction),
     900,
@@ -578,8 +586,7 @@ export async function analyseFullContract(
   jurisdiction: Jurisdiction
 ): Promise<FullAnalysisResult> {
   const result = await runModel<FullAnalysisResult>(
-    r2Keys,
-    filenames,
+    { kind: 'files', r2Keys, filenames },
     buildSystemPrompt(jurisdiction),
     buildFullPrompt(contractType, jurisdiction),
     5000,
@@ -601,4 +608,138 @@ export async function analyseFullContract(
     financial_summary: result.financial_summary,
     immediate_actions: result.immediate_actions,
   };
+}
+
+export async function analysePreviewSnapshotFromSections(
+  sections: ContractSection[],
+  contractType: 'subcontract' | 'head_contract',
+  jurisdiction: Jurisdiction
+): Promise<PreviewSnapshotResult> {
+  return runModel<PreviewSnapshotResult>(
+    { kind: 'sections', sections },
+    buildSystemPrompt(jurisdiction),
+    buildPreviewSnapshotPrompt(contractType, jurisdiction),
+    1100,
+    'preview',
+    'gpt-4o-mini'
+  );
+}
+
+export async function analysePreviewRiskFromSections(
+  sections: ContractSection[],
+  contractType: 'subcontract' | 'head_contract',
+  jurisdiction: Jurisdiction
+): Promise<RiskItem | null> {
+  const result = await runModel<{ preview_risk: RiskItem | null }>(
+    { kind: 'sections', sections },
+    buildSystemPrompt(jurisdiction),
+    buildPreviewRiskPrompt(contractType, jurisdiction),
+    900,
+    'preview',
+    'gpt-4o-mini'
+  );
+
+  return result.preview_risk ?? null;
+}
+
+export async function analyseFullContractFromSections(
+  sections: ContractSection[],
+  contractType: 'subcontract' | 'head_contract',
+  jurisdiction: Jurisdiction
+): Promise<FullAnalysisResult> {
+  const result = await runModel<FullAnalysisResult>(
+    { kind: 'sections', sections },
+    buildSystemPrompt(jurisdiction),
+    buildFullPrompt(contractType, jurisdiction),
+    5000,
+    'full',
+    'gpt-4o'
+  );
+
+  if (!result.risks || !Array.isArray(result.risks)) {
+    throw new Error('AI returned invalid structure - no risks array');
+  }
+
+  const ordered = [...result.risks].sort((a, b) => {
+    const order = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+    return order[a.level] - order[b.level];
+  });
+
+  return {
+    risks: ordered,
+    financial_summary: result.financial_summary,
+    immediate_actions: result.immediate_actions,
+  };
+}
+
+function buildSectionMessages(
+  sections: ContractSection[],
+  baseMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  userPrompt: string,
+  mode: ExtractionMode
+): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+  const prioritizedSections = prioritizeSectionsForAnalysis(sections, mode);
+  let totalChars = 0;
+  const maxChars =
+    mode === 'preview'
+      ? userPrompt.includes('"preview_risk"') ? RISK_MAX_SECTION_CHARS : PREVIEW_MAX_SECTION_CHARS
+      : FULL_MAX_SECTION_CHARS;
+
+  for (const section of prioritizedSections) {
+    const sectionText = formatSectionForPrompt(section);
+    if (!sectionText.trim()) {
+      continue;
+    }
+
+    if (totalChars + sectionText.length > maxChars && totalChars > 0) {
+      break;
+    }
+
+    baseMessages.push({
+      role: 'user',
+      content: sectionText,
+    });
+    totalChars += sectionText.length;
+  }
+
+  baseMessages.push({
+    role: 'user',
+    content: userPrompt,
+  });
+
+  return baseMessages;
+}
+
+function prioritizeSectionsForAnalysis(
+  sections: ContractSection[],
+  mode: ExtractionMode
+): ContractSection[] {
+  const weights: Record<ContractSection['sectionType'], number> = {
+    clause: 0,
+    schedule: 1,
+    annexure: 2,
+    document_intro: 3,
+    page_block: 4,
+  };
+
+  const sorted = [...sections].sort((a, b) => {
+    const weightDiff = weights[a.sectionType] - weights[b.sectionType];
+    if (weightDiff !== 0) {
+      return weightDiff;
+    }
+    return a.sortOrder - b.sortOrder;
+  });
+
+  return mode === 'preview' ? sorted.slice(0, 24) : sorted.slice(0, 80);
+}
+
+function formatSectionForPrompt(section: ContractSection): string {
+  const label = [
+    section.sectionLabel,
+    section.clauseNumber ? `Clause ${section.clauseNumber}` : null,
+    section.heading,
+    section.pageStart ? `Pages ${section.pageStart}${section.pageEnd && section.pageEnd !== section.pageStart ? `-${section.pageEnd}` : ''}` : null,
+  ].filter(Boolean).join(' | ');
+
+  return `\n--- Section: ${label || section.filename} ---\n${section.content.slice(0, 8000)}\n`;
 }

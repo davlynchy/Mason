@@ -1,7 +1,10 @@
 import {
   analyseFullContract,
+  analyseFullContractFromSections,
   analysePreviewRisk,
+  analysePreviewRiskFromSections,
   analysePreviewSnapshot,
+  analysePreviewSnapshotFromSections,
   collectExtractionEvidence,
   type ExtractionEvidence,
   type RiskItem,
@@ -118,7 +121,8 @@ async function runPreviewAnalysis(
 
     const extractionEvidence = await collectExtractionEvidence(r2Keys, filenames, 'preview');
     await persistExtractionEvidence(supabase, reportId, extractionEvidence);
-    await replaceContractSections(supabase, reportId, extractionEvidence);
+    const sections = buildContractSections(extractionEvidence);
+    await replaceContractSections(supabase, reportId, extractionEvidence, sections);
 
     if (!previewData.executive_summary || !previewData.contract_details || !previewData.risk_count) {
       await updateProcessingState(supabase, reportId, {
@@ -136,7 +140,9 @@ async function runPreviewAnalysis(
       const snapshot = await withStepTimeout(
         withPhase(
           'summarising',
-          analysePreviewSnapshot(r2Keys, filenames, contractType, jurisdiction)
+          sections.length
+            ? analysePreviewSnapshotFromSections(sections, contractType, jurisdiction)
+            : analysePreviewSnapshot(r2Keys, filenames, contractType, jurisdiction)
         ),
         'summarising'
       );
@@ -163,7 +169,9 @@ async function runPreviewAnalysis(
       const previewRisk = await withStepTimeout(
         withPhase(
           'top_risk',
-          analysePreviewRisk(r2Keys, filenames, contractType, jurisdiction)
+          sections.length
+            ? analysePreviewRiskFromSections(sections, contractType, jurisdiction)
+            : analysePreviewRisk(r2Keys, filenames, contractType, jurisdiction)
         ),
         'top_risk'
       );
@@ -216,7 +224,8 @@ async function runFullAnalysis(
     const filenames = deriveFilenames(r2Keys);
     const extractionEvidence = await collectExtractionEvidence(r2Keys, filenames, 'full');
     await persistExtractionEvidence(supabase, reportId, extractionEvidence);
-    await replaceContractSections(supabase, reportId, extractionEvidence);
+    const sections = buildContractSections(extractionEvidence);
+    await replaceContractSections(supabase, reportId, extractionEvidence, sections);
 
     const { error: processingError } = await supabase
       .from('reports')
@@ -237,7 +246,9 @@ async function runFullAnalysis(
     const fullData = await withStepTimeout(
       withPhase(
         'top_risk',
-        analyseFullContract(r2Keys, filenames, contractType, jurisdiction)
+        sections.length
+          ? analyseFullContractFromSections(sections, contractType, jurisdiction)
+          : analyseFullContract(r2Keys, filenames, contractType, jurisdiction)
       ),
       'top_risk'
     );
@@ -497,7 +508,8 @@ async function replaceContractSections(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
   reportId: string,
-  evidence: ExtractionEvidence[]
+  evidence: ExtractionEvidence[],
+  sections: ReturnType<typeof buildContractSections>
 ) {
   const { data: reportFiles, error: filesError } = await supabase
     .from('report_files')
@@ -512,8 +524,6 @@ async function replaceContractSections(
   const fileIdByKey = new Map<string, string>(
     reportFiles.map((file: { id: string; r2_key: string }) => [file.r2_key, file.id])
   );
-
-  const sections = buildContractSections(evidence);
 
   const { error: deleteError } = await supabase
     .from('contract_sections')
