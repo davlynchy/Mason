@@ -98,6 +98,73 @@ export function generateRuleBasedFindings(
         'Require documented particulars, prior notice, objective valuation support, and limits on set-off to amounts that are finally determined or genuinely due.'
       );
     }
+
+    if (/(variation).{0,120}(no (claim|payment)|unless.*written|written direction only|only if approved in writing)/i.test(text)) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Strict variation approval gate',
+        'Variation work may be performed without any enforceable entitlement to time or money.',
+        'This section appears to bar variation claims unless there is prior written direction or approval. In practice, subcontractors often carry out urgent instructed work before formal paperwork catches up, which creates a major recovery risk.',
+        'Require payment and time entitlement for directed or reasonably inferred variations, with a fallback valuation mechanism if prior written approval is not obtained.'
+      );
+    }
+
+    if (/(extension of time|eot|delay).{0,120}(sole remedy|exclusive remedy|barred|waive|waiver of damages)/i.test(text)) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Delay remedy restriction',
+        'Delay costs may be unrecoverable even where time impacts are real and substantial.',
+        'The section appears to narrow delay remedies to EOT only, or otherwise exclude delay damages. That can leave a subcontractor carrying prolongation and disruption cost without compensation.',
+        'Negotiate express entitlement to delay costs for principal or contractor-caused delay, and resist sole-remedy wording that limits relief to time only.'
+      );
+    }
+
+    if (/(terminate|termination).{0,120}(for convenience|at any time for convenience)/i.test(text)) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Termination for convenience risk',
+        'The contractor may be able to end the subcontract without default while limiting what you can recover.',
+        'A termination for convenience right can create major commercial exposure if the compensation regime does not clearly cover demobilisation, committed costs, and margin on omitted work.',
+        'Limit convenience termination rights or require full recovery of work done, demobilisation, unavoidable commitments, and a fair margin or break fee.'
+      );
+    }
+
+    if (/(terminate|termination).{0,120}(default|breach).{0,120}(immediately|without notice|at its absolute discretion)/i.test(text)) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Aggressive default termination right',
+        'The subcontract may allow rapid termination before a fair opportunity to remedy issues.',
+        'This wording appears to allow swift or discretionary termination for default. That can materially shift bargaining power and expose you to backcharges and completion cost claims.',
+        'Require objective default triggers, written notice, and a reasonable cure period before termination rights arise.'
+      );
+    }
+
+    if (/(insurance).{0,120}(contract works|professional indemnity|broadform liability|public liability)/i.test(text) &&
+        /(notwithstanding|regardless of|does not limit|in addition to indemnity)/i.test(text)) {
+      pushFinding(
+        section,
+        'MEDIUM',
+        'Insurance does not cap liability',
+        'Insurance obligations may sit alongside uncapped contractual liability.',
+        'This section suggests insurance is required but does not limit liability exposure. That means your contractual risk may exceed available cover, especially where indemnities are broad.',
+        'Add wording that liability is limited to the extent of required insurance where commercially appropriate, and align indemnity and insurance scopes.'
+      );
+    }
+
+    if (/(proportionate liability|apportionment).{0,120}(excluded|does not apply|contract out)/i.test(text)) {
+      pushFinding(
+        section,
+        'MEDIUM',
+        'Proportionate liability exclusion',
+        'You may be exposed to a greater share of loss than your actual responsibility justifies.',
+        'This section appears to contract out of proportionate liability protections or otherwise remove apportionment concepts. That can materially increase exposure where multiple parties contribute to the same loss.',
+        'Resist contracting out of proportionate liability protections and preserve apportionment wherever legally available.'
+      );
+    }
   }
 
   return dedupeRuleFindings(findings);
