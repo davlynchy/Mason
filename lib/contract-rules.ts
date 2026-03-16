@@ -247,6 +247,74 @@ export function generateRuleBasedFindings(
         'Allow preliminary notice followed by later particulars, require actual prejudice before time rights are lost, and avoid strict condition-precedent wording for EOT claims.'
       );
     }
+
+    if (
+      /(concurrent delay|concurrency|concurrently delayed)/i.test(text) &&
+      /(no extension of time|not entitled|barred|no delay costs|contractor may determine)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Harsh concurrent delay treatment',
+        'Time and cost relief may be denied where multiple causes of delay overlap.',
+        'This section appears to deal with concurrent delay in a way that can strip entitlement to EOT or delay costs even where contractor or principal-caused delay materially contributes to the outcome.',
+        'Seek balanced concurrent delay wording, preserve entitlement where your delay is not the sole cause, and avoid blanket bars on time or cost relief.'
+      );
+    }
+
+    if (
+      /(variation).{0,180}(rates in the contract|schedule of rates|reasonable rates|contractor.?s valuation|contractor may value)/i.test(text) &&
+      /(final and binding|absolute discretion|sole discretion|conclusive)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'MEDIUM',
+        'Variation valuation controlled by contractor',
+        'The value of changed work may be set unilaterally with limited room to challenge it.',
+        'This wording appears to give the contractor broad control over variation valuation, potentially using pre-set rates or discretionary assessment as a final measure. That can undercut recovery for changed scope.',
+        'Require transparent valuation principles, a right to substantiate actual cost, and a dispute path if the contractor\'s assessment is not accepted.'
+      );
+    }
+
+    if (
+      /(suspend|suspension).{0,160}(at any time|for any reason|without liability|without compensation)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Broad suspension power without compensation',
+        'Work may be stopped without corresponding entitlement to time or cost recovery.',
+        'The section appears to allow the contractor to suspend the works broadly while limiting compensation. That creates cashflow, programming, and resourcing risk if crews and plant remain committed.',
+        'Limit suspension rights to defined events, require prompt notice, and preserve entitlement to EOT, standby, demobilisation, and remobilisation costs.'
+      );
+    }
+
+    if (
+      /(bank guarantee|security|performance bond|unconditional undertaking).{0,180}(call upon|recourse to|have recourse|draw down|cash security)/i.test(text) &&
+      !/(court order|adjudicator|arbitrator|finally determined|agreed debt|insolvency)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Unrestricted security call right',
+        'The contractor may be able to draw on security before liability is properly determined.',
+        'This wording appears to permit recourse to bank guarantees or other security without strong preconditions. That can create immediate cash and leverage pressure even where the underlying dispute is unresolved.',
+        'Require recourse only for agreed amounts, insolvency, or finally determined debt, with prior notice and time to seek urgent relief before any call is made.'
+      );
+    }
+
+    if (
+      /(bank guarantee|security|retention).{0,180}(replace|increase|additional security|top up)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'MEDIUM',
+        'Security top-up exposure',
+        'The subcontract may require extra security beyond the original commercial deal.',
+        'This section appears to let the contractor demand replacement, increased, or additional security. That can strain working capital and create renegotiation pressure mid-project.',
+        'Cap security at an agreed amount, restrict top-up triggers to objective events, and require prompt reduction and release milestones.'
+      );
+    }
   }
 
   return dedupeRuleFindings(findings);
