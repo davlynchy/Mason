@@ -23,6 +23,9 @@ interface WorkingSection {
 }
 
 const CLAUSE_HEADING_RE = /^(\d+(?:\.\d+){0,3})\s+(.{3,200})$/;
+const CLAUSE_HEADING_WITH_PUNCT_RE = /^(\d+(?:\.\d+){0,3})[\).:-]\s+(.{3,200})$/;
+const SCHEDULE_HEADING_RE = /^(schedule|annexure|appendix)\s+([a-z0-9.-]+)?[:\s-]*(.*)$/i;
+const SECTION_NUMBER_RE = /^(section|clause)\s+(\d+(?:\.\d+){0,3})[:\s-]+(.{3,200})$/i;
 const PAGE_RE = /^Page\s+(\d+)\s+of\s+\d+/i;
 const ALT_PAGE_RE = /^--\s*(\d+)\s+of\s+\d+\s*--$/i;
 
@@ -87,14 +90,32 @@ function segmentExtractedText(filename: string, text: string): Omit<ContractSect
       continue;
     }
 
-    const clauseMatch = line.match(CLAUSE_HEADING_RE);
-    if (clauseMatch && looksLikeClauseHeading(line)) {
+    const numberedClauseMatch =
+      line.match(CLAUSE_HEADING_RE) ??
+      line.match(CLAUSE_HEADING_WITH_PUNCT_RE) ??
+      line.match(SECTION_NUMBER_RE);
+
+    if (numberedClauseMatch && looksLikeClauseHeading(line)) {
       flush();
       current = createWorkingSection(
-        classifySectionType(clauseMatch[2]),
+        classifySectionType(numberedClauseMatch[numberedClauseMatch.length - 1]),
         line,
-        clauseMatch[1],
-        clauseMatch[2],
+        numberedClauseMatch[1] && /^\d/.test(numberedClauseMatch[1]) ? numberedClauseMatch[1] : numberedClauseMatch[2],
+        numberedClauseMatch[numberedClauseMatch.length - 1],
+        currentPage
+      );
+      current.lines.push(line);
+      continue;
+    }
+
+    const scheduleMatch = line.match(SCHEDULE_HEADING_RE);
+    if (scheduleMatch && looksLikeMajorHeading(line)) {
+      flush();
+      current = createWorkingSection(
+        classifySectionType(line),
+        line,
+        null,
+        line,
         currentPage
       );
       current.lines.push(line);
@@ -191,4 +212,16 @@ function isStandaloneHeading(line: string): boolean {
   }
 
   return line === line.toUpperCase() || /^[A-Z][A-Za-z0-9 ,/&()-]+$/.test(line);
+}
+
+function looksLikeMajorHeading(line: string): boolean {
+  if (line.length < 4 || line.length > 180) {
+    return false;
+  }
+
+  if (/^[A-Z][A-Za-z0-9 /&(),.-]+$/.test(line)) {
+    return true;
+  }
+
+  return line === line.toUpperCase();
 }

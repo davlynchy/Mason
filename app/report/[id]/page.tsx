@@ -117,12 +117,23 @@ function RiskBadge({ level }: { level: Risk['level'] }) {
   );
 }
 
+function findingOrigin(risk: Risk) {
+  if (risk.id.startsWith('AU')) {
+    return 'Rule-based';
+  }
+
+  return 'AI analysis';
+}
+
 function RiskCard({ risk }: { risk: Risk }) {
   return (
     <div className="rounded-2xl border border-mason-gray-100 bg-white p-5">
       <div className="mb-3 flex items-center gap-3">
         <span className="text-xs font-semibold text-mason-gray-400">{risk.id}</span>
         <RiskBadge level={risk.level} />
+        <span className="rounded-full bg-mason-gray-100 px-2.5 py-1 text-xs font-semibold text-mason-gray-500">
+          {findingOrigin(risk)}
+        </span>
         {risk.clause ? <span className="text-xs text-mason-gray-400">{risk.clause}</span> : null}
       </div>
       <h3 className="text-base font-semibold text-mason-black">{risk.title}</h3>
