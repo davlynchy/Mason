@@ -160,6 +160,11 @@ export default function LandingPage() {
     addFiles(Array.from(e.dataTransfer.files));
   }, [addFiles]);
 
+  const openFilePicker = useCallback(() => {
+    fileInputRef.current?.showPicker?.();
+    fileInputRef.current?.click();
+  }, []);
+
   const onFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     addFiles(Array.from(e.target.files ?? []));
     e.target.value = '';
@@ -431,19 +436,32 @@ export default function LandingPage() {
             <>
               {phase === 'upload' && (
                 <div
-                  className={`cursor-pointer rounded-3xl border-2 border-dashed p-12 text-center transition-all ${
+                  className={`relative cursor-pointer rounded-3xl border-2 border-dashed p-12 text-center transition-all ${
                     dragOver
                       ? 'border-black bg-mason-gray-50'
                       : 'border-mason-gray-200 hover:border-mason-gray-400 hover:bg-mason-gray-50'
                   }`}
+                  onDragEnter={e => {
+                    e.preventDefault();
+                    setDragOver(true);
+                  }}
                   onDragOver={e => {
                     e.preventDefault();
                     setDragOver(true);
                   }}
                   onDragLeave={() => setDragOver(false)}
                   onDrop={onDrop}
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={openFilePicker}
                 >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,.docx,.doc,.xlsx,.xls,.csv"
+                    className="absolute inset-0 z-10 cursor-pointer opacity-0"
+                    onChange={onFileInput}
+                    aria-label="Upload contract files"
+                  />
                   <div className="mb-4 text-xs font-semibold uppercase tracking-[0.3em] text-mason-gray-400">
                     Upload Contract Files
                   </div>
@@ -472,7 +490,7 @@ export default function LandingPage() {
                       {phase === 'form' && (
                         <button
                           type="button"
-                          onClick={() => fileInputRef.current?.click()}
+                          onClick={openFilePicker}
                           className="text-sm text-mason-gray-500 underline"
                         >
                           Add more
@@ -697,14 +715,6 @@ export default function LandingPage() {
             </>
           )}
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,.docx,.doc,.xlsx,.xls,.csv"
-            className="sr-only"
-            onChange={onFileInput}
-          />
         </div>
       </section>
 
