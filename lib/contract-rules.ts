@@ -1,27 +1,25 @@
 import type { RiskItem, Jurisdiction } from '@/lib/ai';
 import type { ContractSection } from '@/lib/contract-structure';
 
+type PushFinding = (
+  section: ContractSection,
+  level: RiskItem['level'],
+  title: string,
+  impact: string,
+  detail: string,
+  recommendation: string
+) => void;
+
 export function generateRuleBasedFindings(
   sections: ContractSection[],
   jurisdiction: Jurisdiction
 ): RiskItem[] {
-  if (jurisdiction !== 'AU') {
-    return [];
-  }
-
   const findings: RiskItem[] = [];
   let index = 1;
 
-  const pushFinding = (
-    section: ContractSection,
-    level: RiskItem['level'],
-    title: string,
-    impact: string,
-    detail: string,
-    recommendation: string
-  ) => {
+  const pushFinding: PushFinding = (section, level, title, impact, detail, recommendation) => {
     findings.push({
-      id: `AU${String(index++).padStart(2, '0')}`,
+      id: `${jurisdiction}${String(index++).padStart(2, '0')}`,
       level,
       title,
       clause: section.clauseNumber ? `Clause ${section.clauseNumber}` : section.heading ?? section.sectionLabel,
@@ -33,6 +31,18 @@ export function generateRuleBasedFindings(
     });
   };
 
+  if (jurisdiction === 'AU') {
+    collectAuFindings(sections, pushFinding);
+  }
+
+  if (jurisdiction === 'UK') {
+    collectUkFindings(sections, pushFinding);
+  }
+
+  return dedupeRuleFindings(findings);
+}
+
+function collectAuFindings(sections: ContractSection[], pushFinding: PushFinding) {
   for (const section of sections) {
     const text = section.content.toLowerCase();
 
@@ -143,8 +153,10 @@ export function generateRuleBasedFindings(
       );
     }
 
-    if (/(insurance).{0,120}(contract works|professional indemnity|broadform liability|public liability)/i.test(text) &&
-        /(notwithstanding|regardless of|does not limit|in addition to indemnity)/i.test(text)) {
+    if (
+      /(insurance).{0,120}(contract works|professional indemnity|broadform liability|public liability)/i.test(text) &&
+      /(notwithstanding|regardless of|does not limit|in addition to indemnity)/i.test(text)
+    ) {
       pushFinding(
         section,
         'MEDIUM',
@@ -230,7 +242,7 @@ export function generateRuleBasedFindings(
         'MEDIUM',
         'Subjective completion or release milestone',
         'Cash release and completion recognition may depend on subjective contractor judgment.',
-        'This wording appears to make practical completion, final certification, or retention release depend heavily on the contractor’s discretion or satisfaction. That can delay cash release and prolong disputes.',
+        'This wording appears to make practical completion, final certification, or retention release depend heavily on the contractor\'s discretion or satisfaction. That can delay cash release and prolong disputes.',
         'Use objective completion criteria, deeming mechanisms for certification, and clear deadlines for retention and final payment release.'
       );
     }
@@ -315,9 +327,181 @@ export function generateRuleBasedFindings(
         'Cap security at an agreed amount, restrict top-up triggers to objective events, and require prompt reduction and release milestones.'
       );
     }
-  }
 
-  return dedupeRuleFindings(findings);
+    if (
+      /(insolven|bankrupt|administrator|liquidator|receivership|external administration)/i.test(text) &&
+      /(immediately due|set off all amounts|terminate immediately|suspend payment|withhold payment)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Insolvency-triggered enforcement pressure',
+        'A financial event may trigger immediate termination, withholding, and accelerated recovery rights against you.',
+        'This clause appears to give the contractor very strong remedies on insolvency-related events, including immediate termination or withholding. Even early warning events may materially shift leverage before liability is settled.',
+        'Narrow insolvency triggers to clear formal events, require objective thresholds, and limit withholding or recovery rights to amounts properly due.'
+      );
+    }
+
+    if (
+      /(assign|assignment|novate|novation).{0,180}(without consent|at any time|to any person|contractor may assign)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'MEDIUM',
+        'One-way assignment or novation power',
+        'The subcontract may be transferred away from the original counterparty without reciprocal control for you.',
+        'This wording appears to let the contractor assign or novate the subcontract broadly while restricting your own transfer rights. That can expose you to a new counterparty with different financial or delivery risk.',
+        'Require your prior consent for novation to a materially different counterparty, and resist one-way assignment rights without reasonable qualification.'
+      );
+    }
+
+    if (
+      /(subcontract|sub-let|sublet|sub-subcontract|delegate).{0,180}(must not|without prior consent|absolute discretion)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'MEDIUM',
+        'Strict subletting or delegation restriction',
+        'Delivery flexibility may be constrained if specialist subcontracting or delegation needs arise.',
+        'The section appears to prohibit subletting or delegation without broad contractor discretion. That can create delivery and resourcing risk if practical trade packaging changes are needed during the job.',
+        'Allow reasonable specialist sub-subcontracting with prior notice, objective consent criteria, and deemed consent if no timely response is given.'
+      );
+    }
+
+    if (
+      /(latent condition|site condition|physical condition|concealed condition|unforeseen condition)/i.test(text) &&
+      /(contractor not liable|subcontractor bears risk|deemed to have inspected|no claim|at its own cost)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Latent condition risk pushed downstream',
+        'Unexpected site conditions may become your cost and time risk even if not reasonably discoverable.',
+        'This clause appears to allocate latent or unforeseen site condition risk to the subcontractor, often by deeming full inspection and barring later claims. That can be a major pricing and contingency exposure.',
+        'Carve out genuinely latent conditions from subcontractor risk, preserve time and cost relief for unforeseeable conditions, and avoid deeming language that overstates pre-contract inspection capability.'
+      );
+    }
+
+    if (
+      /(dispute|dispute resolution|expert determination|mediation|arbitration).{0,220}(continue to perform|condition precedent|no court|exclusive procedure|must first)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'MEDIUM',
+        'Dispute escalation bottleneck',
+        'The dispute pathway may delay practical relief while requiring ongoing performance.',
+        'This wording appears to impose a mandatory stepped dispute process or restrict access to urgent remedies. If combined with a continue-to-work obligation, it can weaken leverage while cashflow or liability issues remain unresolved.',
+        'Preserve urgent interlocutory relief rights, set short timeframes for each escalation stage, and avoid open-ended continue-to-perform obligations during serious payment disputes.'
+      );
+    }
+  }
+}
+
+function collectUkFindings(sections: ContractSection[], pushFinding: PushFinding) {
+  for (const section of sections) {
+    const text = section.content.toLowerCase();
+
+    if (/(pay when paid|pay if paid|paid by the employer|paid by the client)/i.test(text)) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Pay-when-paid risk',
+        'Payment may be linked to upstream payment by the employer or main contractor.',
+        'This wording appears to tie payment to an upstream receipt event. In the UK, pay-when-paid style provisions are heavily restricted and can create major cashflow risk if relied on operationally.',
+        'Remove upstream-payment dependency and align payment timing with a clear due date, final date for payment, and a compliant notice regime.'
+      );
+    }
+
+    if (
+      /(payment notice|pay less notice|withholding notice|final date for payment)/i.test(text) &&
+      /(sole remedy|exclusive remedy|waive|waiver|not entitled)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Payment notice regime restriction',
+        'The subcontract may narrow statutory payment protections or make non-compliant notices harder to challenge.',
+        'This clause appears to interfere with the contractual or statutory payment notice framework. In the UK, notice compliance is central to payment risk and defective wording can materially prejudice recovery.',
+        'Preserve compliant payment notice and pay less notice mechanics, and avoid wording that waives statutory rights or makes the contractual route the sole remedy.'
+      );
+    }
+
+    if (/indemnif(y|ies|ied).{0,80}(any|all).{0,80}(loss|damage|claim|liability)/i.test(section.content)) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Broad indemnity exposure',
+        'The indemnity may transfer a very wide scope of loss onto your business.',
+        'The indemnity appears broad enough to go beyond your own breach or negligence, which can create disproportionate and potentially uninsured exposure.',
+        'Limit the indemnity to loss caused by your breach, negligence, or wilful default and exclude indirect or employer-caused loss.'
+      );
+    }
+
+    if (
+      /(extension of time|eot|delay).{0,160}(condition precedent|strict compliance|barred|all particulars|full particulars)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Strict delay notice regime',
+        'Relief for delay may be lost if notices are not served exactly as required.',
+        'This clause appears to impose strict notice and particulars requirements for time relief. Under many UK forms, poorly handled notice machinery can significantly reduce recovery prospects.',
+        'Allow prompt preliminary notice followed by later particulars, avoid automatic time bars without prejudice, and keep notice mechanics administratively workable.'
+      );
+    }
+
+    if (
+      /(loss and expense|direct loss and expense|prolongation|delay costs).{0,180}(excluded|sole remedy|not entitled|waive|waiver)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Loss and expense exclusion',
+        'Delay-related cost recovery may be stripped out even where extension of time is available.',
+        'This wording appears to narrow or exclude loss and expense recovery, leaving time relief as the only response to delay. That can materially undercompensate subcontractors for disruption and prolongation.',
+        'Preserve express loss and expense entitlement for contractor or employer-caused delay and resist sole-remedy wording limited to time only.'
+      );
+    }
+
+    if (
+      /(set off|set-off|deduct|contra charge|back charge|backcharge)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'MEDIUM',
+        'Broad set-off or contra-charge rights',
+        'Amounts otherwise due may be reduced without a tightly controlled process.',
+        'The clause appears to permit deductions or contra charges on a broad basis. That can destabilise payment certainty if notice and valuation controls are weak.',
+        'Require clear notice, valuation support, and limits on deductions to sums that are properly due and evidenced.'
+      );
+    }
+
+    if (
+      /(termination|terminate).{0,140}(for convenience|at any time for convenience)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Termination for convenience risk',
+        'The subcontract may be ended without default while leaving you undercompensated.',
+        'A convenience termination right can create significant exposure if payment on termination does not clearly cover work done, demobilisation, commitments, and margin.',
+        'Limit convenience termination rights or require a clear compensation regime covering work done, demobilisation, unavoidable commitments, and a fair commercial recovery.'
+      );
+    }
+
+    if (
+      /(adjudication|dispute resolution|mediation|arbitration).{0,220}(exclusive|sole remedy|condition precedent|must first|no court)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'MEDIUM',
+        'Dispute pathway may slow urgent relief',
+        'Mandatory escalation steps may delay practical enforcement or payment recovery.',
+        'This clause appears to impose a strict dispute ladder or restrict direct recourse while issues escalate. In the UK, preserving effective adjudication and urgent interim relief rights is important.',
+        'Keep adjudication rights clear, allow urgent interim relief, and set short, objective escalation timeframes.'
+      );
+    }
+  }
 }
 
 export function mergeFindings(ruleFindings: RiskItem[], aiFindings: RiskItem[]): RiskItem[] {
@@ -342,7 +526,7 @@ export function mergeRiskCounts(
   const deterministicCount = { high: 0, medium: 0, low: 0 };
 
   for (const finding of mergedFindings) {
-    if (finding.id.startsWith('AU')) {
+    if (/^[A-Z]{2}\d+/.test(finding.id)) {
       if (finding.level === 'HIGH') deterministicCount.high += 1;
       if (finding.level === 'MEDIUM') deterministicCount.medium += 1;
       if (finding.level === 'LOW') deterministicCount.low += 1;

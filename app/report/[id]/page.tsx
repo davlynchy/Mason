@@ -118,7 +118,7 @@ function RiskBadge({ level }: { level: Risk['level'] }) {
 }
 
 function findingOrigin(risk: Risk) {
-  if (risk.id.startsWith('AU')) {
+  if (/^[A-Z]{2}\d+/.test(risk.id)) {
     return 'Rule-based';
   }
 
