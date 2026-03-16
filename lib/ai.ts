@@ -374,7 +374,7 @@ export async function collectExtractionEvidence(
           extractionMethod,
           extractionConfidence,
           extractedChars,
-          extractedText: extractedText.slice(0, 20000),
+          extractedText,
         };
 
         return evidence;

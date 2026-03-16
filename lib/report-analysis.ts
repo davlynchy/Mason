@@ -8,6 +8,7 @@ import {
   type AnalysisStage,
   type Jurisdiction,
 } from '@/lib/ai';
+import { buildContractSections } from '@/lib/contract-structure';
 import { createServerClient } from '@/lib/supabase';
 import type { ProcessingPhase } from '@/lib/report-state';
 
@@ -117,6 +118,7 @@ async function runPreviewAnalysis(
 
     const extractionEvidence = await collectExtractionEvidence(r2Keys, filenames, 'preview');
     await persistExtractionEvidence(supabase, reportId, extractionEvidence);
+    await replaceContractSections(supabase, reportId, extractionEvidence);
 
     if (!previewData.executive_summary || !previewData.contract_details || !previewData.risk_count) {
       await updateProcessingState(supabase, reportId, {
@@ -214,6 +216,7 @@ async function runFullAnalysis(
     const filenames = deriveFilenames(r2Keys);
     const extractionEvidence = await collectExtractionEvidence(r2Keys, filenames, 'full');
     await persistExtractionEvidence(supabase, reportId, extractionEvidence);
+    await replaceContractSections(supabase, reportId, extractionEvidence);
 
     const { error: processingError } = await supabase
       .from('reports')
@@ -487,5 +490,68 @@ async function replaceFindings(
 
   if (insertError) {
     console.error(`Failed to store ${stage} findings:`, insertError);
+  }
+}
+
+async function replaceContractSections(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  reportId: string,
+  evidence: ExtractionEvidence[]
+) {
+  const { data: reportFiles, error: filesError } = await supabase
+    .from('report_files')
+    .select('id, r2_key, filename')
+    .eq('report_id', reportId);
+
+  if (filesError || !reportFiles) {
+    console.error(`Failed to load report files for sectioning [${reportId}]:`, filesError);
+    return;
+  }
+
+  const fileIdByKey = new Map<string, string>(
+    reportFiles.map((file: { id: string; r2_key: string }) => [file.r2_key, file.id])
+  );
+
+  const sections = buildContractSections(evidence);
+
+  const { error: deleteError } = await supabase
+    .from('contract_sections')
+    .delete()
+    .eq('report_id', reportId);
+
+  if (deleteError) {
+    console.error(`Failed to clear contract sections [${reportId}]:`, deleteError);
+    return;
+  }
+
+  if (!sections.length) {
+    return;
+  }
+
+  const rows = sections.map(section => {
+    const matchingEvidence = evidence.find(item => item.filename === section.filename);
+
+    return {
+      report_id: reportId,
+      report_file_id: matchingEvidence ? fileIdByKey.get(matchingEvidence.r2Key) ?? null : null,
+      filename: section.filename,
+      section_type: section.sectionType,
+      section_label: section.sectionLabel,
+      clause_number: section.clauseNumber,
+      heading: section.heading,
+      page_start: section.pageStart,
+      page_end: section.pageEnd,
+      content: section.content,
+      sort_order: section.sortOrder,
+    };
+  });
+
+  const { error: insertError } = await supabase
+    .from('contract_sections')
+    .insert(rows);
+
+  if (insertError) {
+    console.error(`Failed to store contract sections [${reportId}]:`, insertError);
   }
 }

@@ -82,6 +82,22 @@ create table if not exists analysis_findings (
   created_at timestamptz default now()
 );
 
+create table if not exists contract_sections (
+  id uuid primary key default gen_random_uuid(),
+  report_id uuid not null references reports(id) on delete cascade,
+  report_file_id uuid references report_files(id) on delete cascade,
+  filename text not null,
+  section_type text not null check (section_type in ('document_intro','clause','schedule','annexure','page_block')),
+  section_label text,
+  clause_number text,
+  heading text,
+  page_start integer,
+  page_end integer,
+  content text not null,
+  sort_order integer not null default 0,
+  created_at timestamptz default now()
+);
+
 -- ── Row Level Security ────────────────────────────────────────────
 
 -- Profiles: users can read/update their own
@@ -122,3 +138,5 @@ create index if not exists reports_email_idx   on reports(email);
 create index if not exists reports_status_idx  on reports(status);
 create index if not exists report_files_report_id_idx on report_files(report_id);
 create index if not exists analysis_findings_report_id_idx on analysis_findings(report_id);
+create index if not exists contract_sections_report_id_idx on contract_sections(report_id);
+create index if not exists contract_sections_report_file_id_idx on contract_sections(report_file_id);
