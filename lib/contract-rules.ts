@@ -165,6 +165,88 @@ export function generateRuleBasedFindings(
         'Resist contracting out of proportionate liability protections and preserve apportionment wherever legally available.'
       );
     }
+
+    if (
+      /(security of payment|payment claim|reference date|adjudication)/i.test(text) &&
+      /(waive|waiver|not entitled|must not|barred|exclusive remedy|sole remedy)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Security of Payment rights restriction',
+        'The subcontract may try to narrow or undermine statutory payment claim and adjudication rights.',
+        'This wording appears to restrict Security of Payment style rights or make contractual processes the exclusive payment remedy. In Australia, attempts to contract around statutory payment regimes can create major enforcement and cashflow risk.',
+        'Preserve all statutory payment claim and adjudication rights expressly, and remove wording that makes the contract payment process the sole or exclusive remedy.'
+      );
+    }
+
+    if (
+      /(payment claim|progress claim|invoice).{0,160}(only on|only after|only following|only if supported by)/i.test(text) &&
+      /(statutory declaration|timesheet|delivery docket|signed variation|supporting document|condition precedent)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'MEDIUM',
+        'Over-conditioned payment claim process',
+        'Payment may be delayed or rejected for procedural reasons unrelated to the value of work done.',
+        'The section appears to impose a heavily conditioned claim process requiring multiple supporting documents before a payment claim is valid. That can be used tactically to reject claims on form rather than substance.',
+        'Require reasonable supporting information only, preserve the validity of payment claims despite minor defects, and avoid strict condition-precedent language for claim administration.'
+      );
+    }
+
+    if (
+      /(liquidated damages|lds|delay damages).{0,160}(\$|\d|per day|per week|deduct)/i.test(text) &&
+      !/(cap|maximum|aggregate limit|up to)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Liquidated damages without clear cap',
+        'Delay exposure may escalate without a defined commercial ceiling.',
+        'This section appears to impose liquidated damages or delay deductions but does not clearly identify an overall cap. That can leave a subcontractor exposed to open-ended delay recovery claims.',
+        'Set a clear aggregate cap for liquidated damages, link exposure to subcontractor-caused critical delay only, and exclude concurrent or upstream-caused delay.'
+      );
+    }
+
+    if (
+      /(defects liability|defects correction|maintenance period|defects period)/i.test(text) &&
+      /(sole discretion|as directed|any time|extend|extended by|until satisfied)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'MEDIUM',
+        'Open-ended defects liability period',
+        'Defect rectification exposure may continue longer than commercially expected.',
+        'The section appears to allow the defects period to be extended broadly or controlled unilaterally. That can delay final release and keep retention or security tied up for longer than necessary.',
+        'Require a fixed defects liability period, objective extension triggers, and prompt release of retention or security once defined obligations are met.'
+      );
+    }
+
+    if (
+      /(practical completion|final certificate|final payment|retention release).{0,160}(sole discretion|absolute discretion|opinion of the contractor|to the satisfaction of)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'MEDIUM',
+        'Subjective completion or release milestone',
+        'Cash release and completion recognition may depend on subjective contractor judgment.',
+        'This wording appears to make practical completion, final certification, or retention release depend heavily on the contractor’s discretion or satisfaction. That can delay cash release and prolong disputes.',
+        'Use objective completion criteria, deeming mechanisms for certification, and clear deadlines for retention and final payment release.'
+      );
+    }
+
+    if (
+      /(extension of time|eot|delay notice|notice of delay).{0,160}(all particulars|full particulars|strict compliance|condition precedent|barred)/i.test(text)
+    ) {
+      pushFinding(
+        section,
+        'HIGH',
+        'Strict EOT claim mechanics',
+        'Time relief may be lost if notice content or timing is not perfectly complied with.',
+        'The section appears to impose strict EOT notice mechanics requiring detailed particulars as a condition precedent. In practice, that can bar legitimate relief even where delay is genuine and documented.',
+        'Allow preliminary notice followed by later particulars, require actual prejudice before time rights are lost, and avoid strict condition-precedent wording for EOT claims.'
+      );
+    }
   }
 
   return dedupeRuleFindings(findings);
