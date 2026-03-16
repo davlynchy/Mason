@@ -277,19 +277,11 @@ async function extractFileForAnalysis(
         return { text };
       }
 
-      if (mode === 'preview') {
-        return {
-          text: text
-            ? `[Only limited text could be extracted from ${filename}. Fast preview is using the embedded text only, so flag uncertainty where needed.]\n\n${text.slice(0, 6000)}`
-            : `[${filename} appears to be a scanned or image-only PDF. Fast preview cannot run OCR, so treat the document as unreadable and say that clearly in the summary.]`,
-        };
-      }
-
       return {
         filename,
         fileData: `data:application/pdf;base64,${buffer.toString('base64')}`,
         text: text
-          ? `[Limited embedded text was extracted from ${filename}. Use the native PDF input for OCR/page understanding as the source of truth.]\n\n${text.slice(0, 8000)}`
+          ? `[Only limited embedded text was extracted from ${filename}. Use the native PDF input for OCR/page understanding as the source of truth, and rely on the extracted text below only as a hint.]\n\n${text.slice(0, mode === 'preview' ? 6000 : 8000)}`
           : `[No embedded text was extracted from ${filename}. Use the native PDF input for OCR/page understanding as the source of truth.]`,
       };
     } finally {
