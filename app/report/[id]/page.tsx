@@ -23,6 +23,8 @@ interface Risk {
   impact: string;
   detail: string;
   recommendation: string;
+  source_pages?: number[] | null;
+  source_excerpt?: string | null;
 }
 
 interface ContractDetails {
@@ -131,6 +133,17 @@ function RiskCard({ risk }: { risk: Risk }) {
           <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">Recommended action</p>
           <p className="mt-1 text-sm text-mason-black">{risk.recommendation}</p>
         </div>
+        {risk.source_excerpt || risk.source_pages?.length ? (
+          <div className="rounded-xl border border-mason-gray-100 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-mason-gray-400">Source</p>
+            {risk.source_pages?.length ? (
+              <p className="mt-1 text-xs text-mason-gray-500">Pages {risk.source_pages.join(', ')}</p>
+            ) : null}
+            {risk.source_excerpt ? (
+              <p className="mt-2 text-sm text-mason-gray-700">&quot;{risk.source_excerpt}&quot;</p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );

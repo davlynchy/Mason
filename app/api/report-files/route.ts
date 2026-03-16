@@ -5,7 +5,12 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const reportId = body.reportId as string | undefined;
-    const files = body.files as Array<{ r2Key: string; filename: string }> | undefined;
+    const files = body.files as Array<{
+      r2Key: string;
+      filename: string;
+      contentType?: string;
+      fileSize?: number;
+    }> | undefined;
 
     if (!reportId || !files?.length) {
       return NextResponse.json({ error: 'Missing reportId or files' }, { status: 400 });
@@ -16,6 +21,9 @@ export async function POST(req: NextRequest) {
       report_id: reportId,
       r2_key: file.r2Key,
       filename: file.filename,
+      content_type: file.contentType || null,
+      file_size: file.fileSize ?? null,
+      extraction_status: 'pending',
     }));
 
     const { error: deleteError } = await supabase

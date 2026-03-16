@@ -65,11 +65,13 @@ Create a Supabase project, then run:
 - [supabase/migrations/001_initial.sql](/c:/Users/DavidLynch/mason-mvp/supabase/migrations/001_initial.sql)
 - [supabase/migrations/002_add_jurisdiction_and_analysis_stage.sql](/c:/Users/DavidLynch/mason-mvp/supabase/migrations/002_add_jurisdiction_and_analysis_stage.sql)
 - [supabase/migrations/003_add_report_processing_fields.sql](/c:/Users/DavidLynch/mason-mvp/supabase/migrations/003_add_report_processing_fields.sql)
+- [supabase/migrations/004_add_extraction_and_findings.sql](/c:/Users/DavidLynch/mason-mvp/supabase/migrations/004_add_extraction_and_findings.sql)
 
 Important:
 - `001_initial.sql` is for fresh setup
 - `002_add_jurisdiction_and_analysis_stage.sql` must also be run if your database was created before the staged-analysis upgrade
 - `003_add_report_processing_fields.sql` must be run to enable live preview progress, retry state, and SSE updates
+- `004_add_extraction_and_findings.sql` adds extraction evidence storage and citation-ready findings
 
 ### 3. Cloudflare R2
 

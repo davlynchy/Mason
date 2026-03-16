@@ -34,7 +34,21 @@ export interface RiskItem {
   impact: string;
   detail: string;
   recommendation: string;
+  source_pages?: number[] | null;
+  source_excerpt?: string | null;
 }
+
+export interface ExtractionEvidence {
+  r2Key: string;
+  filename: string;
+  extractionStatus: 'pending' | 'extracted' | 'low_confidence' | 'ocr_required' | 'failed';
+  extractionMethod: string;
+  extractionConfidence: number;
+  extractedChars: number;
+  extractedText: string;
+}
+
+type ExtractionStatus = ExtractionEvidence['extractionStatus'];
 
 export interface PreviewAnalysisResult {
   executive_summary: string;
@@ -180,13 +194,17 @@ Review the provided contract under ${getJurisdictionLabel(jurisdiction)} and ret
     "clause": "Clause reference or null",
     "impact": "One-sentence impact",
     "detail": "2-4 sentence explanation",
-    "recommendation": "Specific action"
+    "recommendation": "Specific action",
+    "source_pages": [1, 2],
+    "source_excerpt": "Short direct excerpt supporting the risk"
   }
 }
 
 Requirements:
 - Prioritise the most commercially dangerous issue for the party you act for.
 - If no HIGH risk exists, return the strongest MEDIUM risk.
+- Cite the exact source pages when possible.
+- Keep source_excerpt short and directly grounded in the document.
 - If the contract is unreadable, return { "preview_risk": null }.`;
 }
 
@@ -211,7 +229,9 @@ Analyse all documents under ${getJurisdictionLabel(jurisdiction)} and return the
       "clause": "Clause reference or null",
       "impact": "One-sentence impact",
       "detail": "2-4 sentence explanation",
-      "recommendation": "Specific action"
+      "recommendation": "Specific action",
+      "source_pages": [1, 2],
+      "source_excerpt": "Short direct excerpt supporting the risk"
     }
   ],
   "financial_summary": {
@@ -237,6 +257,7 @@ Requirements:
 - Return ALL HIGH risks first, then MEDIUM, then LOW.
 - Focus on legally and commercially material issues.
 - Keep IDs stable and sequential.
+- Every risk should include source pages and a short source excerpt whenever the supporting text is identifiable.
 - Minimum of 5 risks if this is a substantive contract.`;
 }
 
@@ -309,6 +330,71 @@ async function extractFileForAnalysis(
   }
 
   return { text: `[Unsupported file type: ${filename}]` };
+}
+
+export async function collectExtractionEvidence(
+  r2Keys: string[],
+  filenames: string[],
+  mode: ExtractionMode
+): Promise<ExtractionEvidence[]> {
+  const results = await Promise.all(
+    r2Keys.map(async (r2Key, index) => {
+      const filename = filenames[index] ?? `file_${index + 1}`;
+
+      try {
+        const extracted = await extractFileForAnalysis(r2Key, filename, mode);
+        const extractedText = extracted.text ?? '';
+        const extractedChars = extractedText.trim().length;
+
+        let extractionStatus: ExtractionStatus = 'extracted';
+        let extractionMethod = 'text';
+        let extractionConfidence = 0.9;
+
+        if (extracted.fileData) {
+          extractionStatus = extractedChars > 0 ? 'low_confidence' : 'ocr_required';
+          extractionMethod = 'pdf_native_plus_ocr';
+          extractionConfidence = extractedChars > 0 ? 0.55 : 0.3;
+        } else if (extracted.base64) {
+          extractionStatus = 'ocr_required';
+          extractionMethod = 'image_ocr';
+          extractionConfidence = 0.25;
+        } else if (extractedChars < MIN_EMBEDDED_PDF_TEXT && filename.toLowerCase().endsWith('.pdf')) {
+          extractionStatus = 'low_confidence';
+          extractionMethod = 'pdf_text';
+          extractionConfidence = 0.5;
+        } else if (filename.toLowerCase().endsWith('.doc') || filename.toLowerCase().endsWith('.docx')) {
+          extractionMethod = 'docx_text';
+          extractionConfidence = 0.95;
+        }
+
+        const evidence: ExtractionEvidence = {
+          r2Key,
+          filename,
+          extractionStatus,
+          extractionMethod,
+          extractionConfidence,
+          extractedChars,
+          extractedText: extractedText.slice(0, 20000),
+        };
+
+        return evidence;
+      } catch (error) {
+        const evidence: ExtractionEvidence = {
+          r2Key,
+          filename,
+          extractionStatus: 'failed',
+          extractionMethod: 'failed',
+          extractionConfidence: 0,
+          extractedChars: 0,
+          extractedText: `[Extraction failed: ${error instanceof Error ? error.message : 'unknown error'}]`,
+        };
+
+        return evidence;
+      }
+    })
+  );
+
+  return results;
 }
 
 let pdfParseCtorPromise: Promise<PDFParseCtor> | null = null;

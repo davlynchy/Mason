@@ -54,6 +54,31 @@ create table if not exists report_files (
   report_id  uuid not null references reports(id) on delete cascade,
   r2_key     text not null,
   filename   text not null,
+  content_type text,
+  file_size bigint,
+  extraction_status text
+            check (extraction_status in ('pending','extracted','low_confidence','ocr_required','failed')),
+  extraction_method text,
+  extraction_confidence double precision,
+  extracted_chars integer,
+  extracted_text text,
+  created_at timestamptz default now()
+);
+
+create table if not exists analysis_findings (
+  id uuid primary key default gen_random_uuid(),
+  report_id uuid not null references reports(id) on delete cascade,
+  stage text not null check (stage in ('preview','full')),
+  risk_id text not null,
+  level text not null check (level in ('HIGH','MEDIUM','LOW')),
+  title text not null,
+  clause text,
+  impact text not null,
+  detail text not null,
+  recommendation text not null,
+  source_pages integer[],
+  source_excerpt text,
+  sort_order integer not null default 0,
   created_at timestamptz default now()
 );
 
@@ -96,3 +121,4 @@ create index if not exists reports_user_id_idx on reports(user_id);
 create index if not exists reports_email_idx   on reports(email);
 create index if not exists reports_status_idx  on reports(status);
 create index if not exists report_files_report_id_idx on report_files(report_id);
+create index if not exists analysis_findings_report_id_idx on analysis_findings(report_id);

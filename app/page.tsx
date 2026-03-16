@@ -268,13 +268,18 @@ export default function LandingPage() {
       const { reportId } = createData;
 
       setProcessingMsg(`Uploading ${files.length} file${files.length > 1 ? 's' : ''}...`);
-      const uploadedFiles: Array<{ r2Key: string; filename: string }> = [];
+      const uploadedFiles: Array<{ r2Key: string; filename: string; contentType: string; fileSize: number }> = [];
       for (const item of files) {
         setFiles(prev => prev.map(file =>
           file.id === item.id ? { ...file, status: 'uploading' } : file
         ));
         const key = await uploadFile(item, reportId);
-        uploadedFiles.push({ r2Key: key, filename: item.file.name });
+        uploadedFiles.push({
+          r2Key: key,
+          filename: item.file.name,
+          contentType: item.file.type || 'application/octet-stream',
+          fileSize: item.file.size,
+        });
       }
 
       const persistFilesRes = await fetch('/api/report-files', {

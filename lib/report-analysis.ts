@@ -2,6 +2,9 @@ import {
   analyseFullContract,
   analysePreviewRisk,
   analysePreviewSnapshot,
+  collectExtractionEvidence,
+  type ExtractionEvidence,
+  type RiskItem,
   type AnalysisStage,
   type Jurisdiction,
 } from '@/lib/ai';
@@ -112,6 +115,9 @@ async function runPreviewAnalysis(
     const filenames = deriveFilenames(r2Keys);
     const previewData = existingPreviewData ?? {};
 
+    const extractionEvidence = await collectExtractionEvidence(r2Keys, filenames, 'preview');
+    await persistExtractionEvidence(supabase, reportId, extractionEvidence);
+
     if (!previewData.executive_summary || !previewData.contract_details || !previewData.risk_count) {
       await updateProcessingState(supabase, reportId, {
         phase: 'extracting',
@@ -163,6 +169,8 @@ async function runPreviewAnalysis(
       previewData.preview_risk = previewRisk;
     }
 
+    await replaceFindings(supabase, reportId, 'preview', previewData.preview_risk ? [previewData.preview_risk as RiskItem] : []);
+
     const { error } = await supabase
       .from('reports')
       .update({
@@ -203,6 +211,10 @@ async function runFullAnalysis(
   jurisdiction: Jurisdiction
 ) {
   try {
+    const filenames = deriveFilenames(r2Keys);
+    const extractionEvidence = await collectExtractionEvidence(r2Keys, filenames, 'full');
+    await persistExtractionEvidence(supabase, reportId, extractionEvidence);
+
     const { error: processingError } = await supabase
       .from('reports')
       .update({
@@ -222,10 +234,12 @@ async function runFullAnalysis(
     const fullData = await withStepTimeout(
       withPhase(
         'top_risk',
-        analyseFullContract(r2Keys, deriveFilenames(r2Keys), contractType, jurisdiction)
+        analyseFullContract(r2Keys, filenames, contractType, jurisdiction)
       ),
       'top_risk'
     );
+
+    await replaceFindings(supabase, reportId, 'full', fullData.risks);
 
     const { error } = await supabase
       .from('reports')
@@ -403,4 +417,75 @@ function normaliseFailureMessage(error: unknown): string {
   }
 
   return error.message;
+}
+
+async function persistExtractionEvidence(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  reportId: string,
+  evidence: ExtractionEvidence[]
+) {
+  for (const item of evidence) {
+    const { error } = await supabase
+      .from('report_files')
+      .update({
+        extraction_status: item.extractionStatus,
+        extraction_method: item.extractionMethod,
+        extraction_confidence: item.extractionConfidence,
+        extracted_chars: item.extractedChars,
+        extracted_text: item.extractedText,
+      })
+      .eq('report_id', reportId)
+      .eq('r2_key', item.r2Key);
+
+    if (error) {
+      console.error(`Failed to persist extraction evidence for ${item.filename}:`, error);
+    }
+  }
+}
+
+async function replaceFindings(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  reportId: string,
+  stage: 'preview' | 'full',
+  risks: RiskItem[]
+) {
+  const { error: deleteError } = await supabase
+    .from('analysis_findings')
+    .delete()
+    .eq('report_id', reportId)
+    .eq('stage', stage);
+
+  if (deleteError) {
+    console.error(`Failed to clear ${stage} findings:`, deleteError);
+    return;
+  }
+
+  if (!risks.length) {
+    return;
+  }
+
+  const rows = risks.map((risk, index) => ({
+    report_id: reportId,
+    stage,
+    risk_id: risk.id,
+    level: risk.level,
+    title: risk.title,
+    clause: risk.clause,
+    impact: risk.impact,
+    detail: risk.detail,
+    recommendation: risk.recommendation,
+    source_pages: risk.source_pages ?? null,
+    source_excerpt: risk.source_excerpt ?? null,
+    sort_order: index,
+  }));
+
+  const { error: insertError } = await supabase
+    .from('analysis_findings')
+    .insert(rows);
+
+  if (insertError) {
+    console.error(`Failed to store ${stage} findings:`, insertError);
+  }
 }
